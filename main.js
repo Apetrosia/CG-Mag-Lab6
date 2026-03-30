@@ -71,44 +71,41 @@ const EFFECT_CONFIGS = {
         texture: null,
         useSprite: false,
         trailLength: 0.3,
-        spawnHeight: 5,      // Верхняя граница спавна
-        despawnHeight: -5     // Нижняя граница удаления
+        spawnHeight: 5,
+        despawnHeight: -5
     },
     
-    // Эффект 4: Снег (клавиша E)
+    // Эффект 4: СНЕГ (клавиша E / У)
     4: {
-        particleCount: 200,
-        particleSize: 28,
+        particleCount: 180,
+        particleSize: 32,
         spawnRadius: 10,
         fallSpeed: 0.008,
         speedVariation: 0.003,
-        horizontalDrift: 0.025,
-        driftVariation: 0.012,
-        driftFrequency: 1.0,
+        horizontalDrift: 0.01,
+        driftVariation: 0.008,
+        driftFrequency: 0.0,
         useTracks: false,
         trackColorStart: [1.0, 1.0, 1.0],
         trackColorEnd: [1.0, 1.0, 1.0],
         blendMode: 'alpha',
         gravity: 0.0,
         lifetime: null,
-        movementType: 'drifting',
+        movementType: 'falling',
         spawnArea: 'top',
         trailType: 'none',
         texture: 'snowflake.png',
         useSprite: true,
-        spawnHeight: 5,
-        despawnHeight: -5
+        spawnHeight: 3,
+        despawnHeight: -3
     }
 };
 
 let currentEffectId = 1;
 
 const KEY_TO_EFFECT = {
-    '1': 1,
-    '2': 2,
-    '3': 3,
-    'e': 4, 'E': 4,
-    'у': 4, 'У': 4
+    '1': 1, '2': 2, '3': 3,
+    'e': 4, 'E': 4, 'у': 4, 'У': 4
 };
 
 // ============================================
@@ -126,14 +123,22 @@ const vertexShaderSpark = `
     }
 `;
 
+// ▼▼▼ ИСПРАВЛЕННЫЙ ФРАГМЕНТНЫЙ ШЕЙДЕР ▼▼▼
 const fragmentShaderSpark = `
     precision mediump float;
     uniform sampler2D u_texture;
     uniform int u_useTexture;
     void main() {
         if (u_useTexture == 1) {
-            gl_FragColor = texture2D(u_texture, gl_PointCoord);
+            vec4 texColor = texture2D(u_texture, gl_PointCoord);
+            // ▼▼▼ ОТБРАСЫВАЕМ ПРОЗРАЧНЫЕ ПИКСЕЛИ ▼▼▼
+            // Убирает чёрные квадраты вокруг спрайтов
+            if (texColor.a < 0.05) {
+                discard;
+            }
+            gl_FragColor = texColor;
         } else {
+            // Цвет для точек дождя
             gl_FragColor = vec4(0.7, 0.85, 1.0, 0.9);
         }
     }
@@ -168,7 +173,7 @@ class Spark {
         this.config = config;
         this.index = index;
         this.totalCount = totalCount;
-        this.init(true); // true = первичная инициализация
+        this.init(true);
     }
     
     init(isInitial = false) {
@@ -198,18 +203,12 @@ class Spark {
             this.z = (this.dz * offset) % this.zMax;
             
         } else if (cfg.movementType === 'falling' || cfg.movementType === 'drifting') {
-            // ▼▼▼ ГЛАВНОЕ ИСПРАВЛЕНИЕ ▼▼▼
-            // При первичной инициализации распределяем частицы по всей высоте
-            // При респауне — только сверху
             if (isInitial) {
-                // Распределяем равномерно по всему видимому диапазону
                 const spawnTop = cfg.spawnHeight || 5;
                 const spawnBottom = cfg.despawnHeight || -5;
                 const range = spawnTop - spawnBottom;
-                // Каждая частица получает свою позицию в диапазоне
                 this.y = spawnBottom + (range * (this.index / this.totalCount)) + Math.random() * 0.5;
             } else {
-                // При респауне — только сверху
                 this.y = (cfg.spawnHeight || 5) + Math.random() * 2;
             }
             
@@ -265,10 +264,7 @@ class Spark {
             
             if (cfg.lifetime) {
                 this.currentLifetime -= timeShift;
-                if (this.currentLifetime <= 0) {
-                    this.init(false);
-                    return;
-                }
+                if (this.currentLifetime <= 0) { this.init(false); return; }
             }
             
             if (Math.abs(this.x) > Math.abs(this.xMax) || 
@@ -286,19 +282,15 @@ class Spark {
             
             let drift = this.baseDrift;
             if (cfg.driftFrequency > 0) {
-                drift += Math.sin(time * 0.0015 * cfg.driftAmp + this.driftPhase) * cfg.horizontalDrift * 0.3;
+                drift += Math.sin(time * 0.002 * cfg.driftAmp + this.driftPhase) * cfg.horizontalDrift * 0.5;
             }
             this.x += drift * speed;
             
             if (cfg.lifetime) {
                 this.currentLifetime -= timeShift;
-                if (this.currentLifetime <= 0) {
-                    this.init(false);
-                    return;
-                }
+                if (this.currentLifetime <= 0) { this.init(false); return; }
             }
             
-            // Респаун если упала НИЖЕ границы
             const despawnHeight = cfg.despawnHeight || -5;
             if (this.y < despawnHeight) {
                 this.init(false);
@@ -306,25 +298,14 @@ class Spark {
         }
     }
     
-    getPosition() {
-        return [this.x, this.y, this.z];
-    }
+    getPosition() { return [this.x, this.y, this.z]; }
     
     getTrackData() {
         const cfg = this.config;
-        
         if (cfg.trailType === 'center') {
-            return {
-                start: [0, 0, 0],
-                end: [this.x, this.y, this.z],
-                color: cfg.trackColorEnd
-            };
+            return { start: [0, 0, 0], end: [this.x, this.y, this.z], color: cfg.trackColorEnd };
         } else if (cfg.trailType === 'moving') {
-            return {
-                start: [this.prevX, this.prevY, this.prevZ],
-                end: [this.x, this.y, this.z],
-                color: cfg.trackColorEnd
-            };
+            return { start: [this.prevX, this.prevY, this.prevZ], end: [this.x, this.y, this.z], color: cfg.trackColorEnd };
         }
         return null;
     }
@@ -344,7 +325,7 @@ class ParticleSystem {
         this.locations = {};
         this.buffers = {};
         this.texture = null;
-        this.textureLoaded = false;
+        this.textureLoaded = false;  // ▼▼▼ ФЛАГ ЗАГРУЗКИ ТЕКСТУРЫ ▼▼▼
         this.init();
     }
     
@@ -419,15 +400,18 @@ class ParticleSystem {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, 
                      new Uint8Array([255, 255, 255, 255]));
         
+        // Если текстура не нужна — сразу готово
         if (!textureName || !cfg.useSprite) {
             this.textureLoaded = true;
             return;
         }
         
+        // ▼▼▼ ЖДЁМ ЗАГРУЗКУ ТЕКСТУРЫ ▼▼▼
         return new Promise((resolve) => {
             const image = new Image();
             image.src = textureName;
             image.crossOrigin = 'anonymous';
+            
             image.onload = function() {
                 gl.bindTexture(gl.TEXTURE_2D, this.texture);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
@@ -435,16 +419,19 @@ class ParticleSystem {
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                
                 if (isPowerOf2(image.width) && isPowerOf2(image.height)) {
                     gl.generateMipmap(gl.TEXTURE_2D);
                     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
                 }
                 gl.bindTexture(gl.TEXTURE_2D, null);
-                this.textureLoaded = true;
+                
+                this.textureLoaded = true;  // ▼▼▼ ТЕКСТУРА ЗАГРУЖЕНА ▼▼▼
                 resolve();
             }.bind(this);
+            
             image.onerror = function() {
-                console.warn(`Не удалось загрузить ${textureName}`);
+                console.warn(`⚠️ Не удалось загрузить ${textureName}`);
                 this.textureLoaded = true;
                 resolve();
             }.bind(this);
@@ -454,7 +441,6 @@ class ParticleSystem {
     createSparks() {
         this.sparks = [];
         for (let i = 0; i < this.config.particleCount; i++) {
-            // Передаём индекс и общее количество для равномерного распределения
             this.sparks.push(new Spark(this.config, i, this.config.particleCount));
         }
     }
@@ -475,6 +461,12 @@ class ParticleSystem {
     render(time, matrices) {
         const gl = this.gl;
         const cfg = this.config;
+        
+        // ▼▼▼ НЕ РЕНДЕРИМ ЧАСТИЦЫ СО СПРАЙТОМ, ПОКА ТЕКСТУРА НЕ ЗАГРУЖЕНА ▼▼▼
+        // Это убирает "дёрганье" при переключении на снег
+        if (cfg.useSprite && cfg.texture && !this.textureLoaded) {
+            return;
+        }
         
         if (cfg.blendMode === 'additive') {
             gl.enable(gl.BLEND);
@@ -549,13 +541,8 @@ class ParticleSystem {
         gl.drawArrays(gl.POINTS, 0, positions.length / 3);
     }
     
-    reset() { 
-        this.createSparks(); 
-    }
-    
-    getParticleCount() {
-        return this.sparks.length;
-    }
+    reset() { this.createSparks(); }
+    getParticleCount() { return this.sparks.length; }
 }
 
 // ============================================
@@ -581,7 +568,6 @@ class App {
     resize() {
         const displayWidth = window.innerWidth;
         const displayHeight = window.innerHeight;
-        
         if (this.canvas.width !== displayWidth || this.canvas.height !== displayHeight) {
             this.canvas.width = displayWidth;
             this.canvas.height = displayHeight;
@@ -632,17 +618,14 @@ class App {
     render(time) {
         const gl = this.gl;
         this.resize();
-        
         gl.clearColor(0.0, 0.0, 0.0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.enable(gl.DEPTH_TEST);
-        
         if (this.particleSystem) {
             this.particleSystem.update(time);
             const matrices = this.getMatrices();
             this.particleSystem.render(time, matrices);
         }
-        
         requestAnimationFrame((t) => this.render(t));
     }
 }
@@ -654,9 +637,5 @@ class App {
 function isPowerOf2(value) {
     return (value & (value - 1)) === 0 && value !== 0;
 }
-
-// ============================================
-// ЗАПУСК
-// ============================================
 
 window.addEventListener('load', () => { new App(); });
