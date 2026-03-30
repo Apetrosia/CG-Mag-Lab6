@@ -1,0 +1,25 @@
+{
+  "name": "cg-mag-lab6",
+  "version": "1.0.0",
+  "description": "Необходимо реализовать на базе системы частиц:",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "serve"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Apetrosia/CG-Mag-Lab6.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Apetrosia/CG-Mag-Lab6/issues"
+  },
+  "homepage": "https://github.com/Apetrosia/CG-Mag-Lab6#readme",
+  "devDependencies": {
+    "serve": "^14.2.6"
+  }
+}
