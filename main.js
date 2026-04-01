@@ -26,27 +26,31 @@ const EFFECT_CONFIGS = {
         useSprite: true
     },
     
-    // Эффект 2: Заготовка
+    // Эффект 2: ДЫМ (клавиша 2) ▼▼▼ ИСПРАВЛЕННЫЙ ▼▼▼
     2: {
-        particleCount: 100,
-        particleSize: 20,
-        spawnRadius: 2.0,
-        fallSpeed: 0.0,
-        speedVariation: 0.0,
-        horizontalDrift: 0.0,
-        driftVariation: 0.0,
-        driftFrequency: 0.0,
+        particleCount: 150,
+        particleSize: 55,             // крупные частицы для видимости
+        spawnRadius: 5,               // ширина источника
+        riseSpeed: 0.006,             // ← ПОЛОЖИТЕЛЬНАЯ = подъём вверх (новая переменная!)
+        speedVariation: 0.002,        // разброс скорости
+        horizontalDrift: 0.012,       // дрейф в сторону
+        driftVariation: 0.006,        // вариация дрейфа
+        driftFrequency: 0.7,          // частота колебаний
         useTracks: false,
-        trackColorStart: [1.0, 1.0, 1.0],
-        trackColorEnd: [1.0, 1.0, 1.0],
-        blendMode: 'additive',
+        trackColorStart: [0.6, 0.6, 0.6],
+        trackColorEnd: [0.6, 0.6, 0.6],
+        blendMode: 'alpha',
         gravity: 0.0,
         lifetime: null,
-        movementType: 'radial',
-        spawnArea: 'center',
+        movementType: 'rising',
+        spawnArea: 'bottom',
         trailType: 'none',
         texture: null,
-        useSprite: false
+        useSprite: false,
+        spawnHeight: -3,              // спавн снизу
+        despawnHeight: 5,             // удаление сверху
+        particleColor: [0.65, 0.65, 0.68], // светлее серый для контраста
+        baseAlpha: 0.85               // ← базовая прозрачность частицы
     },
     
     // Эффект 3: Дождь (клавиша 3)
@@ -75,7 +79,7 @@ const EFFECT_CONFIGS = {
         despawnHeight: -5
     },
     
-    // Эффект 4: СНЕГ (клавиша E / У)
+    // Эффект 4: Снег (клавиша E / У)
     4: {
         particleCount: 180,
         particleSize: 32,
@@ -96,7 +100,7 @@ const EFFECT_CONFIGS = {
         trailType: 'none',
         texture: 'snowflake.png',
         useSprite: true,
-        spawnHeight: 3,
+        spawnHeight: 1,
         despawnHeight: -3
     }
 };
@@ -128,18 +132,25 @@ const fragmentShaderSpark = `
     precision mediump float;
     uniform sampler2D u_texture;
     uniform int u_useTexture;
+    uniform vec3 u_particleColor;
+    uniform float u_baseAlpha;
     void main() {
         if (u_useTexture == 1) {
             vec4 texColor = texture2D(u_texture, gl_PointCoord);
-            // ▼▼▼ ОТБРАСЫВАЕМ ПРОЗРАЧНЫЕ ПИКСЕЛИ ▼▼▼
-            // Убирает чёрные квадраты вокруг спрайтов
             if (texColor.a < 0.05) {
                 discard;
             }
             gl_FragColor = texColor;
         } else {
-            // Цвет для точек дождя
-            gl_FragColor = vec4(0.7, 0.85, 1.0, 0.9);
+            // Мягкая процедурная частица
+            vec2 coord = gl_PointCoord - 0.5;
+            float dist = length(coord);
+            if (dist > 0.5) discard;
+            // Мягкий градиент от центра к краям
+            float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+            // ▼▼▼ ИСПОЛЬЗУЕМ u_baseAlpha из конфига ▼▼▼
+            alpha *= u_baseAlpha;
+            gl_FragColor = vec4(u_particleColor, alpha);
         }
     }
 `;
@@ -189,7 +200,7 @@ class Spark {
             this.yMax = Math.sin(angleRad) * radius;
             this.zMax = (Math.random() - 0.5) * 0.5;
             
-            const baseSpeed = cfg.fallSpeed !== 0 ? cfg.fallSpeed : 0.004;
+            const baseSpeed = cfg.fallSpeed !== 0 ? Math.abs(cfg.fallSpeed) : 0.004;
             const variation = (Math.random() - 0.5) * cfg.speedVariation;
             const multiplier = 1 / (baseSpeed + variation + 0.001);
             
@@ -202,25 +213,41 @@ class Spark {
             this.y = (this.dy * offset) % this.yMax;
             this.z = (this.dz * offset) % this.zMax;
             
-        } else if (cfg.movementType === 'falling' || cfg.movementType === 'drifting') {
+        } else if (cfg.movementType === 'falling' || cfg.movementType === 'drifting' || cfg.movementType === 'rising') {
+            // Распределение по высоте при старте
             if (isInitial) {
-                const spawnTop = cfg.spawnHeight || 5;
-                const spawnBottom = cfg.despawnHeight || -5;
-                const range = spawnTop - spawnBottom;
+                const spawnBottom = cfg.spawnHeight !== undefined ? cfg.spawnHeight : (cfg.movementType === 'rising' ? -3 : 5);
+                const spawnTop = cfg.despawnHeight !== undefined ? cfg.despawnHeight : (cfg.movementType === 'rising' ? 5 : -5);
+                const range = Math.abs(spawnTop - spawnBottom);
                 this.y = spawnBottom + (range * (this.index / this.totalCount)) + Math.random() * 0.5;
             } else {
-                this.y = (cfg.spawnHeight || 5) + Math.random() * 2;
+                // При респауне — с нужной стороны
+                if (cfg.movementType === 'rising') {
+                    this.y = (cfg.spawnHeight !== undefined ? cfg.spawnHeight : -3) + Math.random() * 1.5;
+                } else {
+                    this.y = (cfg.spawnHeight !== undefined ? cfg.spawnHeight : 5) + Math.random() * 2;
+                }
             }
             
             this.x = (Math.random() - 0.5) * cfg.spawnRadius * 2;
             this.z = (Math.random() - 0.5) * 0.2;
             
+            // ▼▼▼ ИСПРАВЛЕННЫЙ РАСЧЁТ СКОРОСТИ ▼▼▼
             const variation = (Math.random() - 0.5) * cfg.speedVariation;
-            this.dy = -cfg.fallSpeed - variation;
             
+            if (cfg.movementType === 'rising') {
+                // Для восходящих частиц используем riseSpeed (положительный = вверх)
+                this.dy = cfg.riseSpeed + variation;
+            } else {
+                // Для падающих: fallSpeed положительный = вниз, поэтому минус
+                this.dy = -cfg.fallSpeed - variation;
+            }
+            
+            // Горизонтальный дрейф с вариацией
             const driftVar = (Math.random() - 0.5) * cfg.driftVariation;
             this.baseDrift = cfg.horizontalDrift + driftVar;
             
+            // Колебания для дыма/снега
             if (cfg.driftFrequency > 0) {
                 this.driftPhase = Math.random() * Math.PI * 2;
                 this.driftAmp = cfg.driftFrequency;
@@ -273,16 +300,17 @@ class Spark {
                 this.init(false);
             }
             
-        } else if (cfg.movementType === 'falling' || cfg.movementType === 'drifting') {
+        } else if (cfg.movementType === 'falling' || cfg.movementType === 'drifting' || cfg.movementType === 'rising') {
             this.y += this.dy * speed;
             
             if (cfg.gravity !== 0) {
                 this.dy -= cfg.gravity * speed;
             }
             
+            // Дрейф с колебаниями
             let drift = this.baseDrift;
             if (cfg.driftFrequency > 0) {
-                drift += Math.sin(time * 0.002 * cfg.driftAmp + this.driftPhase) * cfg.horizontalDrift * 0.5;
+                drift += Math.sin(time * 0.0018 * cfg.driftAmp + this.driftPhase) * cfg.horizontalDrift * 0.6;
             }
             this.x += drift * speed;
             
@@ -291,8 +319,11 @@ class Spark {
                 if (this.currentLifetime <= 0) { this.init(false); return; }
             }
             
-            const despawnHeight = cfg.despawnHeight || -5;
-            if (this.y < despawnHeight) {
+            // ▼▼▼ ИСПРАВЛЕННЫЙ РЕСПАВН ПО ГРАНИЦАМ ▼▼▼
+            const despawnHeight = cfg.despawnHeight !== undefined ? cfg.despawnHeight : (cfg.movementType === 'rising' ? 5 : -5);
+            
+            if ((cfg.movementType === 'rising' && this.y > despawnHeight) ||
+                (cfg.movementType !== 'rising' && this.y < despawnHeight)) {
                 this.init(false);
             }
         }
@@ -325,7 +356,7 @@ class ParticleSystem {
         this.locations = {};
         this.buffers = {};
         this.texture = null;
-        this.textureLoaded = false;  // ▼▼▼ ФЛАГ ЗАГРУЗКИ ТЕКСТУРЫ ▼▼▼
+        this.textureLoaded = false;
         this.init();
     }
     
@@ -379,7 +410,9 @@ class ParticleSystem {
             pMatrix: gl.getUniformLocation(this.programs.spark, 'u_pMatrix'),
             pointSize: gl.getUniformLocation(this.programs.spark, 'u_pointSize'),
             texture: gl.getUniformLocation(this.programs.spark, 'u_texture'),
-            useTexture: gl.getUniformLocation(this.programs.spark, 'u_useTexture')
+            useTexture: gl.getUniformLocation(this.programs.spark, 'u_useTexture'),
+            particleColor: gl.getUniformLocation(this.programs.spark, 'u_particleColor'),
+            baseAlpha: gl.getUniformLocation(this.programs.spark, 'u_baseAlpha')
         };
         gl.useProgram(this.programs.track);
         this.locations.track = {
@@ -400,13 +433,11 @@ class ParticleSystem {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, 
                      new Uint8Array([255, 255, 255, 255]));
         
-        // Если текстура не нужна — сразу готово
         if (!textureName || !cfg.useSprite) {
             this.textureLoaded = true;
             return;
         }
         
-        // ▼▼▼ ЖДЁМ ЗАГРУЗКУ ТЕКСТУРЫ ▼▼▼
         return new Promise((resolve) => {
             const image = new Image();
             image.src = textureName;
@@ -425,8 +456,7 @@ class ParticleSystem {
                     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
                 }
                 gl.bindTexture(gl.TEXTURE_2D, null);
-                
-                this.textureLoaded = true;  // ▼▼▼ ТЕКСТУРА ЗАГРУЖЕНА ▼▼▼
+                this.textureLoaded = true;
                 resolve();
             }.bind(this);
             
@@ -462,8 +492,6 @@ class ParticleSystem {
         const gl = this.gl;
         const cfg = this.config;
         
-        // ▼▼▼ НЕ РЕНДЕРИМ ЧАСТИЦЫ СО СПРАЙТОМ, ПОКА ТЕКСТУРА НЕ ЗАГРУЖЕНА ▼▼▼
-        // Это убирает "дёрганье" при переключении на снег
         if (cfg.useSprite && cfg.texture && !this.textureLoaded) {
             return;
         }
@@ -531,6 +559,11 @@ class ParticleSystem {
         gl.uniformMatrix4fv(this.locations.spark.pMatrix, false, matrices.p);
         gl.uniform1f(this.locations.spark.pointSize, cfg.particleSize);
         gl.uniform1i(this.locations.spark.useTexture, cfg.useSprite && cfg.texture ? 1 : 0);
+        
+        // Цвет и прозрачность частицы
+        const color = cfg.particleColor || [1.0, 1.0, 1.0];
+        gl.uniform3fv(this.locations.spark.particleColor, color);
+        gl.uniform1f(this.locations.spark.baseAlpha, cfg.baseAlpha !== undefined ? cfg.baseAlpha : 1.0);
         
         if (cfg.useSprite && cfg.texture && this.texture) {
             gl.activeTexture(gl.TEXTURE0);
