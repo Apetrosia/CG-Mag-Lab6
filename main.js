@@ -76,7 +76,13 @@ const EFFECT_CONFIGS = {
         useSprite: false,
         trailLength: 0.3,
         spawnHeight: 5,
-        despawnHeight: -5
+        despawnHeight: -5,
+        useViewportBounds: true,
+        spawnMargin: 0.35,
+        despawnMargin: 0.55,
+        spawnHorizontalOverscanRatio: 1.25,
+        initialActiveRatio: 0.45,
+        initialFillDurationMs: 1200
     },
     
     // Эффект 4: Снег (клавиша E / У)
@@ -86,7 +92,7 @@ const EFFECT_CONFIGS = {
         spawnRadius: 10,
         fallSpeed: 0.008,
         speedVariation: 0.003,
-        horizontalDrift: 0.01,
+        horizontalDrift: 0.005,
         driftVariation: 0.008,
         driftFrequency: 0.0,
         useTracks: false,
@@ -101,7 +107,13 @@ const EFFECT_CONFIGS = {
         texture: 'snowflake.png',
         useSprite: true,
         spawnHeight: 1,
-        despawnHeight: -3
+        despawnHeight: -3,
+        useViewportBounds: true,
+        spawnMargin: 0.25,
+        despawnMargin: 0.45,
+        spawnHorizontalOverscanRatio: 50.25,
+        initialActiveRatio: 0.4,
+        initialFillDurationMs: 1400
     }
 };
 
@@ -180,16 +192,110 @@ const fragmentShaderTrack = `
 // ============================================
 
 class Spark {
-    constructor(config, index, totalCount) {
+    constructor(config, index, totalCount, getBounds) {
         this.config = config;
         this.index = index;
         this.totalCount = totalCount;
+        this.getBounds = getBounds;
         this.init(true);
+    }
+
+    getRuntimeBounds() {
+        if (typeof this.getBounds === 'function') {
+            const bounds = this.getBounds();
+            if (bounds) {
+                return bounds;
+            }
+        }
+        return null;
+    }
+
+    getSpawnRangeY(cfg, bounds, isInitial) {
+        const spawnMargin = cfg.spawnMargin !== undefined ? cfg.spawnMargin : 0.35;
+        if (cfg.movementType === 'rising') {
+            if (bounds && cfg.useViewportBounds) {
+                const minY = bounds.bottom - spawnMargin;
+                const maxY = bounds.top;
+                return { minY, maxY };
+            }
+            const base = cfg.spawnHeight !== undefined ? cfg.spawnHeight : -3;
+            return isInitial ? { minY: base, maxY: cfg.despawnHeight !== undefined ? cfg.despawnHeight : 5 } : { minY: base, maxY: base + 1.5 };
+        }
+
+        if (bounds && cfg.useViewportBounds) {
+            const minY = bounds.bottom;
+            const maxY = bounds.top + spawnMargin;
+            return { minY, maxY };
+        }
+
+        const top = cfg.spawnHeight !== undefined ? cfg.spawnHeight : 5;
+        const bottom = cfg.despawnHeight !== undefined ? cfg.despawnHeight : -5;
+        return isInitial ? { minY: bottom, maxY: top } : { minY: top, maxY: top + 2.0 };
+    }
+
+    getRespawnY(cfg, bounds) {
+        const spawnMargin = cfg.spawnMargin !== undefined ? cfg.spawnMargin : 0.35;
+        if (cfg.movementType === 'rising') {
+            if (bounds && cfg.useViewportBounds) {
+                return (bounds.bottom - spawnMargin) + Math.random() * spawnMargin;
+            }
+            return (cfg.spawnHeight !== undefined ? cfg.spawnHeight : -3) + Math.random() * 1.5;
+        }
+
+        if (bounds && cfg.useViewportBounds) {
+            return (bounds.top + spawnMargin) - Math.random() * spawnMargin;
+        }
+        return (cfg.spawnHeight !== undefined ? cfg.spawnHeight : 5) + Math.random() * 2;
+    }
+
+    getRandomX(cfg, bounds) {
+        if (bounds && cfg.useViewportBounds) {
+            const width = bounds.right - bounds.left;
+            const overscanRatio = cfg.spawnHorizontalOverscanRatio !== undefined ? cfg.spawnHorizontalOverscanRatio : 0;
+            const overscan = width * overscanRatio;
+            const xBias = (cfg.spawnXBias !== undefined ? cfg.spawnXBias : 0) * width;
+            return (bounds.left - overscan) + Math.random() * (width + overscan * 2) + xBias;
+        }
+        return (Math.random() - 0.5) * cfg.spawnRadius * 2;
     }
     
     init(isInitial = false) {
         this.timeFromCreation = performance.now();
         const cfg = this.config;
+
+        this.isActive = true;
+        this.activateAt = 0;
+
+        if (isInitial && (cfg.movementType === 'falling' || cfg.movementType === 'drifting') && cfg.initialActiveRatio !== undefined) {
+            const activeCount = Math.max(0, Math.floor(this.totalCount * cfg.initialActiveRatio));
+            if (this.index >= activeCount) {
+                const delayedCount = Math.max(1, this.totalCount - activeCount);
+                const delayedIndex = this.index - activeCount;
+                const fillDuration = cfg.initialFillDurationMs !== undefined ? cfg.initialFillDurationMs : 1200;
+
+                this.isActive = false;
+                this.activateAt = this.timeFromCreation + (fillDuration * delayedIndex / delayedCount);
+                this.x = 0;
+                this.y = -9999;
+                this.z = 0;
+                this.prevX = this.x;
+                this.prevY = this.y;
+                this.prevZ = this.z;
+                this.dx = 0;
+                this.dy = 0;
+                this.dz = 0;
+                this.baseDrift = 0;
+
+                if (cfg.lifetime) {
+                    this.maxLifetime = cfg.lifetime;
+                    this.currentLifetime = cfg.lifetime;
+                } else {
+                    this.maxLifetime = null;
+                    this.currentLifetime = null;
+                }
+                return;
+            }
+        }
         
         if (cfg.movementType === 'radial') {
             const angle = Math.random() * 360;
@@ -214,22 +320,24 @@ class Spark {
             this.z = (this.dz * offset) % this.zMax;
             
         } else if (cfg.movementType === 'falling' || cfg.movementType === 'drifting' || cfg.movementType === 'rising') {
+            const bounds = this.getRuntimeBounds();
             // Распределение по высоте при старте
-            if (isInitial) {
-                const spawnBottom = cfg.spawnHeight !== undefined ? cfg.spawnHeight : (cfg.movementType === 'rising' ? -3 : 5);
-                const spawnTop = cfg.despawnHeight !== undefined ? cfg.despawnHeight : (cfg.movementType === 'rising' ? 5 : -5);
-                const range = Math.abs(spawnTop - spawnBottom);
-                this.y = spawnBottom + (range * (this.index / this.totalCount)) + Math.random() * 0.5;
+            if (isInitial && cfg.movementType !== 'rising') {
+                // Для дождя/снега: с первого кадра только верхний спавн.
+                this.y = this.getRespawnY(cfg, bounds);
+                this.x = this.getRandomX(cfg, bounds);
+            } else if (isInitial) {
+                const spawnRange = this.getSpawnRangeY(cfg, bounds, true);
+                const range = spawnRange.maxY - spawnRange.minY;
+                const t = (this.index + Math.random()) / this.totalCount;
+                this.y = spawnRange.minY + range * t;
+                this.x = this.getRandomX(cfg, bounds);
             } else {
                 // При респауне — с нужной стороны
-                if (cfg.movementType === 'rising') {
-                    this.y = (cfg.spawnHeight !== undefined ? cfg.spawnHeight : -3) + Math.random() * 1.5;
-                } else {
-                    this.y = (cfg.spawnHeight !== undefined ? cfg.spawnHeight : 5) + Math.random() * 2;
-                }
+                this.y = this.getRespawnY(cfg, bounds);
+                this.x = this.getRandomX(cfg, bounds);
             }
-            
-            this.x = (Math.random() - 0.5) * cfg.spawnRadius * 2;
+
             this.z = (Math.random() - 0.5) * 0.2;
             
             // ▼▼▼ ИСПРАВЛЕННЫЙ РАСЧЁТ СКОРОСТИ ▼▼▼
@@ -272,6 +380,13 @@ class Spark {
         this.timeFromCreation = time;
         const speed = timeShift * 0.05;
         const cfg = this.config;
+
+        if (!this.isActive) {
+            if (time >= this.activateAt) {
+                this.init(false);
+            }
+            return;
+        }
         
         if (cfg.trailType === 'moving') {
             this.prevX = this.x;
@@ -301,6 +416,7 @@ class Spark {
             }
             
         } else if (cfg.movementType === 'falling' || cfg.movementType === 'drifting' || cfg.movementType === 'rising') {
+            const bounds = this.getRuntimeBounds();
             this.y += this.dy * speed;
             
             if (cfg.gravity !== 0) {
@@ -320,10 +436,20 @@ class Spark {
             }
             
             // ▼▼▼ ИСПРАВЛЕННЫЙ РЕСПАВН ПО ГРАНИЦАМ ▼▼▼
+            const despawnMargin = cfg.despawnMargin !== undefined ? cfg.despawnMargin : 0.5;
             const despawnHeight = cfg.despawnHeight !== undefined ? cfg.despawnHeight : (cfg.movementType === 'rising' ? 5 : -5);
+            const viewportTop = bounds ? bounds.top + despawnMargin : null;
+            const viewportBottom = bounds ? bounds.bottom - despawnMargin : null;
+            const outOfVerticalBounds = bounds && (
+                (cfg.movementType === 'rising' && this.y > viewportTop) ||
+                (cfg.movementType !== 'rising' && this.y < viewportBottom)
+            );
+            const outOfHorizontalBounds = bounds && (this.x < bounds.left - despawnMargin || this.x > bounds.right + despawnMargin);
             
             if ((cfg.movementType === 'rising' && this.y > despawnHeight) ||
-                (cfg.movementType !== 'rising' && this.y < despawnHeight)) {
+                (cfg.movementType !== 'rising' && this.y < despawnHeight) ||
+                outOfVerticalBounds ||
+                outOfHorizontalBounds) {
                 this.init(false);
             }
         }
@@ -347,10 +473,11 @@ class Spark {
 // ============================================
 
 class ParticleSystem {
-    constructor(gl, effectId) {
+    constructor(gl, effectId, getBounds) {
         this.gl = gl;
         this.effectId = effectId;
         this.config = this.getConfigForEffect(effectId);
+        this.getBounds = getBounds;
         this.sparks = [];
         this.programs = {};
         this.locations = {};
@@ -471,7 +598,7 @@ class ParticleSystem {
     createSparks() {
         this.sparks = [];
         for (let i = 0; i < this.config.particleCount; i++) {
-            this.sparks.push(new Spark(this.config, i, this.config.particleCount));
+            this.sparks.push(new Spark(this.config, i, this.config.particleCount, () => this.getBounds ? this.getBounds() : null));
         }
     }
     
@@ -595,7 +722,7 @@ class App {
     
     init() {
         this.resize();
-        this.particleSystem = new ParticleSystem(this.gl, currentEffectId);
+        this.particleSystem = new ParticleSystem(this.gl, currentEffectId, () => this.getParticleBounds());
     }
     
     resize() {
@@ -613,6 +740,20 @@ class App {
         const pMatrix = this.perspectiveMatrix(45, aspect, 0.1, 100);
         const mvMatrix = this.translationMatrix(0, 0, -5);
         return { p: pMatrix, mv: mvMatrix };
+    }
+
+    getParticleBounds() {
+        const fovRad = 45 * Math.PI / 180;
+        const cameraDistance = 5;
+        const aspect = this.canvas.width / this.canvas.height;
+        const halfHeight = Math.tan(fovRad / 2) * cameraDistance;
+        const halfWidth = halfHeight * aspect;
+        return {
+            left: -halfWidth,
+            right: halfWidth,
+            top: halfHeight,
+            bottom: -halfHeight
+        };
     }
     
     perspectiveMatrix(fov, aspect, near, far) {
@@ -645,7 +786,7 @@ class App {
     switchEffect(effectId) {
         if (effectId === currentEffectId) return;
         currentEffectId = effectId;
-        this.particleSystem = new ParticleSystem(this.gl, effectId);
+        this.particleSystem = new ParticleSystem(this.gl, effectId, () => this.getParticleBounds());
     }
     
     render(time) {
