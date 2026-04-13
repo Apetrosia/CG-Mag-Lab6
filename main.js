@@ -214,7 +214,7 @@
 			3: '3: Rain',
 			4: '4: Clouds + Steam',
 			5: '5: Fireworks',
-			6: '6: Extra effect',
+			6: '6: Aurora',
 			7: 'E: Snow'
 		}
 	};
@@ -261,7 +261,8 @@
 			alpha: p.alpha == null ? 1 : p.alpha,
 			alphaEnd: p.alphaEnd == null ? 0 : p.alphaEnd,
 			gravityScale: p.gravityScale == null ? 1 : p.gravityScale,
-			sprite: spriteType
+			sprite: spriteType,
+			kind: p.kind || 'generic'
 		});
 	}
 
@@ -286,7 +287,8 @@
 				alpha: 0.95,
 				alphaEnd: 0.0,
 				gravityScale: 0.48,
-				spriteType: 1
+				spriteType: 1,
+				kind: 'sparkler'
 			});
 		}
 	}
@@ -321,9 +323,9 @@
 				x: randomRange(0, width),
 				y: randomRange(-40, -4),
 				vx: randomRange(-22, 14),
-				vy: randomRange(630, 980),
+				vy: randomRange(330, 580),
 				drag: 0,
-				life: randomRange(0.75, 1.35),
+				life: randomRange(1.9, 3.1),
 				size: randomRange(2.0, 3.3),
 				sizeEnd: 1.4,
 				color: [0.58, 0.76, 1.0],
@@ -344,11 +346,11 @@
 				x: randomRange(0, width),
 				y,
 				vx: randomRange(-18, 18) + wind,
-				vy: randomRange(80, 165),
+				vy: randomRange(70, 145),
 				drag: 0.22,
-				life: randomRange(4.8, 8.0),
-				size: randomRange(3.6, 5.8),
-				sizeEnd: randomRange(2.8, 4.8),
+				life: randomRange(8.5, 13.0),
+				size: randomRange(3.2, 5.2),
+				sizeEnd: randomRange(2.4, 4.2),
 				color: [0.95, 0.98, 1.0],
 				colorEnd: [0.86, 0.9, 0.95],
 				alpha: randomRange(0.6, 0.95),
@@ -361,16 +363,22 @@
 	}
 
 	function spawnCloudsAndSteam(dt, t) {
-		const cloudCount = emissionCount(36, dt);
-		const topBand = height * 0.14;
+		const cloudRate = Math.random() < 0.55 ? 28 : 10;
+		const cloudCount = emissionCount(cloudRate, dt);
+		const cloudClusterX = randomRange(0.1, 0.9) * width;
+		const clusterSpread = randomRange(width * 0.08, width * 0.22);
 		for (let i = 0; i < cloudCount; i += 1) {
+			const x = Math.random() < 0.7 ? randomRange(cloudClusterX - clusterSpread, cloudClusterX + clusterSpread) : randomRange(-20, width + 20);
+			const y = randomRange(height * 0.06, height * 0.28);
+			const speedTier = Math.random();
+			const vx = speedTier < 0.35 ? randomRange(3, 11) : speedTier < 0.75 ? randomRange(10, 22) : randomRange(18, 34);
 			spawnParticle({
-				x: randomRange(-20, width + 20),
-				y: topBand + randomRange(-18, 58),
-				vx: randomRange(8, 28),
+				x,
+				y,
+				vx,
 				vy: randomRange(-8, 8),
 				drag: 0.16,
-				life: randomRange(6.0, 10.5),
+				life: randomRange(11.0, 18.0),
 				size: randomRange(52, 95),
 				sizeEnd: randomRange(120, 175),
 				color: [0.38, 0.4, 0.45],
@@ -520,32 +528,48 @@
 	}
 
 	function spawnMagicSpiral(dt, t) {
-		const count = Math.floor(220 * dt);
-		const cx = width * 0.5;
-		const cy = height * 0.55;
+		const count = emissionCount(240, dt);
 		for (let i = 0; i < count; i += 1) {
-			const base = t * 2.8 + i * 0.4;
-			const radius = randomRange(10, 36);
-			const ang = base + Math.sin(base * 0.33) * 0.5;
-			const swirl = 105 + 38 * Math.sin(t * 3 + i);
-			const hue = 0.5 + 0.5 * Math.sin(base);
+			const x = randomRange(0, width);
+			const nx = x / width;
+			const phase1 = t * 0.35 + randomRange(-Math.PI, Math.PI);
+			const phase2 = t * 0.7 + randomRange(-Math.PI, Math.PI);
+			const phase3 = t * 1.25 + randomRange(-Math.PI, Math.PI);
+			const waveA = Math.sin(nx * 8.8 + phase1);
+			const waveB = Math.sin(nx * 15.4 + phase2) * 0.55;
+			const waveC = Math.sin(nx * 23.6 + phase3) * 0.28;
+			const turbulence = randomRange(-0.22, 0.22);
+			const yBase = height * 0.5 + (waveA + waveB + waveC + turbulence) * height * 0.12;
+			const palette = [
+				[0.15, 0.88, 0.72],
+				[0.22, 0.66, 1.0],
+				[0.52, 0.42, 1.0],
+				[0.95, 0.46, 0.78]
+			];
+			const c1 = palette[Math.floor(randomRange(0, palette.length))];
+			const c2 = palette[Math.floor(randomRange(0, palette.length))];
+			const mixK = randomRange(0.1, 0.9);
+			const r = lerp(c1[0], c2[0], mixK);
+			const g = lerp(c1[1], c2[1], mixK);
+			const b = lerp(c1[2], c2[2], mixK);
 
 			spawnParticle({
-				x: cx + Math.cos(ang) * radius,
-				y: cy + Math.sin(ang) * radius,
-				vx: Math.cos(ang + Math.PI * 0.5) * swirl,
-				vy: Math.sin(ang + Math.PI * 0.5) * swirl - randomRange(30, 70),
-				ax: (cx - (cx + Math.cos(ang) * radius)) * 0.8,
-				ay: (cy - (cy + Math.sin(ang) * radius)) * 0.8,
-				drag: 1.7,
-				life: randomRange(0.8, 1.6),
-				size: randomRange(2.0, 4.2),
-				sizeEnd: 0.6,
-				color: [0.2 + 0.8 * hue, 0.8, 1.0 - 0.4 * hue],
-				colorEnd: [0.08, 0.04, 0.12],
-				alpha: 0.8,
+				x,
+				y: yBase + randomRange(-62, 62),
+				vx: randomRange(-30, 30),
+				vy: randomRange(-26, 18),
+				ax: randomRange(-8, 8),
+				ay: randomRange(-3.2, 3.2),
+				drag: 0.18,
+				life: randomRange(4.8, 8.4),
+				size: randomRange(28, 62),
+				sizeEnd: randomRange(70, 130),
+				color: [r, g, b],
+				colorEnd: [r * 0.3, g * 0.35, b * 0.45],
+				alpha: randomRange(0.12, 0.26),
 				alphaEnd: 0,
-				gravityScale: -0.08
+				gravityScale: -0.06,
+				fadeIn: randomRange(0.8, 1.8)
 			});
 		}
 	}
@@ -558,6 +582,8 @@
 	function updateParticles(dt) {
 		for (let i = particles.length - 1; i >= 0; i -= 1) {
 			const p = particles[i];
+			const prevX = p.x;
+			const prevY = p.y;
 			p.life -= dt;
 
 			if (p.life <= 0) {
@@ -574,6 +600,26 @@
 
 			p.x += p.vx * dt;
 			p.y += p.vy * dt;
+
+			if (p.kind === 'sparkler' && Math.random() < 0.86) {
+				spawnParticle({
+					x: prevX,
+					y: prevY,
+					vx: p.vx * 0.04 + randomRange(-8, 8),
+					vy: p.vy * 0.04 + randomRange(-8, 8),
+					drag: 2.5,
+					life: randomRange(0.14, 0.28),
+					size: randomRange(2.6, 4.6),
+					sizeEnd: 0.4,
+					color: [1.0, 0.74, 0.28],
+					colorEnd: [1.0, 0.2, 0.03],
+					alpha: 0.55,
+					alphaEnd: 0,
+					gravityScale: 0.35,
+					spriteType: 0,
+					kind: 'sparklerTrail'
+				});
+			}
 		}
 
 		if (particles.length > state.maxParticles) {
