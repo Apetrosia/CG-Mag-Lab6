@@ -10,10 +10,12 @@
 		attribute vec2 a_position;
 		attribute float a_size;
 		attribute vec4 a_color;
+		attribute float a_sprite;
 
 		uniform vec2 u_resolution;
 
 		varying vec4 v_color;
+		varying float v_sprite;
 
 		void main() {
 			vec2 zeroToOne = a_position / u_resolution;
@@ -23,21 +25,33 @@
 			gl_Position = vec4(clipSpace * vec2(1.0, -1.0), 0.0, 1.0);
 			gl_PointSize = a_size;
 			v_color = a_color;
+			v_sprite = a_sprite;
 		}
 	`;
 
 	const fragmentShaderSource = `
 		precision mediump float;
 
+		uniform sampler2D u_spriteTexture;
+		uniform float u_spriteReady;
+
 		varying vec4 v_color;
+		varying float v_sprite;
 
 		void main() {
 			vec2 p = gl_PointCoord - vec2(0.5);
 			float d = length(p) * 2.0;
 			float core = smoothstep(0.75, 0.0, d);
 			float glow = smoothstep(1.0, 0.2, d) * 0.35;
-			float alpha = (core + glow) * v_color.a;
-			gl_FragColor = vec4(v_color.rgb, alpha);
+			float radialAlpha = (core + glow) * v_color.a;
+
+			if (v_sprite > 0.5 && u_spriteReady > 0.5) {
+				vec4 sprite = texture2D(u_spriteTexture, gl_PointCoord);
+				gl_FragColor = vec4(v_color.rgb * sprite.rgb, v_color.a * sprite.a);
+				return;
+			}
+
+			gl_FragColor = vec4(v_color.rgb, radialAlpha);
 		}
 	`;
 
@@ -81,18 +95,70 @@
 		return a + (b - a) * t;
 	}
 
+	function emissionCount(ratePerSecond, dt) {
+		const expected = ratePerSecond * dt;
+		const whole = Math.floor(expected);
+		return whole + (Math.random() < expected - whole ? 1 : 0);
+	}
+
+	function createTexturePlaceholder() {
+		const texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, texture);
+		gl.texImage2D(
+			gl.TEXTURE_2D,
+			0,
+			gl.RGBA,
+			1,
+			1,
+			0,
+			gl.RGBA,
+			gl.UNSIGNED_BYTE,
+			new Uint8Array([255, 255, 255, 255])
+		);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		return texture;
+	}
+
+	function loadTexture(texture, src, onReady) {
+		const image = new Image();
+		image.onload = () => {
+			gl.bindTexture(gl.TEXTURE_2D, texture);
+			gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+			onReady();
+		};
+		image.src = src;
+	}
+
 	const particleProgram = createProgram(vertexShaderSource, fragmentShaderSource);
 
 	const loc = {
 		position: gl.getAttribLocation(particleProgram, 'a_position'),
 		size: gl.getAttribLocation(particleProgram, 'a_size'),
 		color: gl.getAttribLocation(particleProgram, 'a_color'),
-		resolution: gl.getUniformLocation(particleProgram, 'u_resolution')
+		sprite: gl.getAttribLocation(particleProgram, 'a_sprite'),
+		resolution: gl.getUniformLocation(particleProgram, 'u_resolution'),
+		spriteTexture: gl.getUniformLocation(particleProgram, 'u_spriteTexture'),
+		spriteReady: gl.getUniformLocation(particleProgram, 'u_spriteReady')
 	};
 
 	const positionBuffer = gl.createBuffer();
 	const sizeBuffer = gl.createBuffer();
 	const colorBuffer = gl.createBuffer();
+	const spriteBuffer = gl.createBuffer();
+
+	const sparklerTexture = createTexturePlaceholder();
+	let sparklerTextureReady = false;
+	loadTexture(sparklerTexture, 'beng_light.png', () => {
+		sparklerTextureReady = true;
+	});
 
 	let width = 1;
 	let height = 1;
@@ -119,7 +185,41 @@
 	const particles = [];
 	const rockets = [];
 
+	const state = {
+		mode: 1,
+		time: 0,
+		fireworkTimer: 0.8,
+		maxParticles: 18000,
+		sizeScale: 1.7,
+		snowExtraScale: 1.25,
+		modeNames: {
+			1: '1: Beng lights',
+			2: '2: Smoke',
+			3: '3: Rain + Snow',
+			4: '4: Clouds + Steam',
+			5: '5: Fireworks',
+			6: '6: Extra effect'
+		}
+	};
+
+	function setMode(mode) {
+		state.mode = mode;
+		particles.length = 0;
+		rockets.length = 0;
+		state.fireworkTimer = 0.5;
+		document.title = `Lab 6 - ${state.modeNames[mode]}`;
+		console.log(`Mode ${mode} enabled`);
+	}
+
+	window.addEventListener('keydown', (event) => {
+		const key = Number(event.key);
+		if (key >= 1 && key <= 6) {
+			setMode(key);
+		}
+	});
+
 	function spawnParticle(p) {
+		const sizeScale = p.sizeScale == null ? state.sizeScale : p.sizeScale;
 		particles.push({
 			x: p.x,
 			y: p.y,
@@ -130,152 +230,166 @@
 			drag: p.drag == null ? 0 : p.drag,
 			life: p.life,
 			maxLife: p.life,
-			size: p.size,
-			sizeEnd: p.sizeEnd == null ? p.size : p.sizeEnd,
+			size: p.size * sizeScale,
+			sizeEnd: (p.sizeEnd == null ? p.size : p.sizeEnd) * sizeScale,
 			fadeIn: p.fadeIn || 0,
 			color: p.color.slice(),
 			colorEnd: (p.colorEnd || p.color).slice(),
 			alpha: p.alpha == null ? 1 : p.alpha,
 			alphaEnd: p.alphaEnd == null ? 0 : p.alphaEnd,
 			gravityScale: p.gravityScale == null ? 1 : p.gravityScale,
-			kind: p.kind || 'generic'
+			sprite: p.sprite ? 1 : 0
 		});
 	}
 
 	function spawnSparkler(dt, t) {
-		const count = Math.floor(280 * dt);
-		const x = width * 0.16;
-		const y = height * 0.86;
+		const count = emissionCount(340, dt);
+		const x = width * 0.5;
+		const y = height * 0.58;
 		for (let i = 0; i < count; i += 1) {
-			const ang = randomRange(-1.8, -1.1) + Math.sin(t * 12.0 + i) * 0.12;
-			const speed = randomRange(120, 360);
+			const ang = randomRange(0, Math.PI * 2) + Math.sin(t * 9.0 + i * 0.2) * 0.12;
+			const speed = randomRange(140, 410);
 			spawnParticle({
 				x,
 				y,
-				vx: Math.cos(ang) * speed + randomRange(-20, 20),
+				vx: Math.cos(ang) * speed + randomRange(-30, 30),
 				vy: Math.sin(ang) * speed,
-				drag: 1.8,
-				life: randomRange(0.6, 1.3),
-				size: randomRange(2.0, 4.8),
-				sizeEnd: 0.8,
-				color: [1.0, randomRange(0.75, 0.95), randomRange(0.2, 0.45)],
-				colorEnd: [1.0, 0.2, 0.02],
-				alpha: 1.0,
+				drag: 1.6,
+				life: randomRange(0.55, 1.2),
+				size: randomRange(4.0, 8.8),
+				sizeEnd: 1.0,
+				color: [1.0, randomRange(0.78, 0.96), randomRange(0.22, 0.45)],
+				colorEnd: [1.0, 0.2, 0.05],
+				alpha: 0.95,
 				alphaEnd: 0.0,
-				gravityScale: 0.7,
-				kind: 'sparkler'
+				gravityScale: 0.68,
+				sprite: true
 			});
 		}
 	}
 
 	function spawnSmoke(dt) {
-		const count = Math.floor(95 * dt);
-		const x = width * 0.16;
-		const y = height * 0.84;
+		const count = emissionCount(130, dt);
+		const x = width * 0.5;
+		const y = height * 0.7;
 		for (let i = 0; i < count; i += 1) {
 			spawnParticle({
-				x: x + randomRange(-10, 10),
-				y: y + randomRange(-6, 6),
-				vx: randomRange(-20, 20),
-				vy: randomRange(-90, -20),
-				drag: 0.6,
-				life: randomRange(2.2, 4.0),
-				size: randomRange(10, 18),
-				sizeEnd: randomRange(32, 64),
-				color: [0.45, 0.45, 0.45],
+				x: x + randomRange(-16, 16),
+				y: y + randomRange(-8, 8),
+				vx: randomRange(-36, 36),
+				vy: randomRange(-135, -40),
+				drag: 0.56,
+				life: randomRange(2.2, 4.2),
+				size: randomRange(14, 22),
+				sizeEnd: randomRange(46, 90),
+				color: [0.5, 0.5, 0.5],
 				colorEnd: [0.1, 0.1, 0.1],
-				alpha: randomRange(0.24, 0.38),
+				alpha: randomRange(0.24, 0.34),
 				alphaEnd: 0.0,
-				gravityScale: -0.12,
-				kind: 'smoke'
+				gravityScale: -0.16
 			});
 		}
 	}
 
 	function spawnRain(dt) {
-		const count = Math.floor(900 * dt);
+		const count = emissionCount(1000, dt);
 		for (let i = 0; i < count; i += 1) {
 			spawnParticle({
 				x: randomRange(0, width),
-				y: randomRange(-40, -5),
-				vx: randomRange(-14, 10),
-				vy: randomRange(620, 910),
-				drag: 0.0,
-				life: randomRange(0.8, 1.4),
-				size: randomRange(1.2, 2.1),
+				y: randomRange(-40, -4),
+				vx: randomRange(-22, 14),
+				vy: randomRange(630, 980),
+				drag: 0,
+				life: randomRange(0.75, 1.35),
+				size: randomRange(1.2, 2.0),
 				sizeEnd: 1.0,
-				color: [0.55, 0.72, 1.0],
-				colorEnd: [0.45, 0.62, 0.95],
-				alpha: randomRange(0.34, 0.58),
-				alphaEnd: 0.08,
-				gravityScale: 0.0,
-				kind: 'rain'
+				color: [0.58, 0.76, 1.0],
+				colorEnd: [0.45, 0.6, 0.9],
+				alpha: randomRange(0.35, 0.56),
+				alphaEnd: 0.06,
+				gravityScale: 0
 			});
 		}
 	}
 
-	function spawnSteamJets(dt, t) {
-		const baseX = width * 0.78;
-		const baseY = height * 0.9;
-		const jets = 3;
+	function spawnSnow(dt, t) {
+		const count = emissionCount(260, dt);
+		for (let i = 0; i < count; i += 1) {
+			const y = randomRange(-20, -2);
+			const wind = Math.sin(t * 0.7 + y * 0.04) * 35;
+			spawnParticle({
+				x: randomRange(0, width),
+				y,
+				vx: randomRange(-18, 18) + wind,
+				vy: randomRange(80, 165),
+				drag: 0.22,
+				life: randomRange(4.8, 8.0),
+				size: randomRange(2.0, 3.6),
+				sizeEnd: randomRange(1.6, 2.8),
+				color: [0.95, 0.98, 1.0],
+				colorEnd: [0.86, 0.9, 0.95],
+				alpha: randomRange(0.6, 0.95),
+				alphaEnd: 0.15,
+				gravityScale: 0.06,
+				sizeScale: state.sizeScale * state.snowExtraScale
+			});
+		}
+	}
 
+	function spawnCloudsAndSteam(dt, t) {
+		const cloudCount = emissionCount(36, dt);
+		const topBand = height * 0.27;
+		for (let i = 0; i < cloudCount; i += 1) {
+			spawnParticle({
+				x: randomRange(-20, width + 20),
+				y: topBand + randomRange(-70, 95),
+				vx: randomRange(8, 28),
+				vy: randomRange(-8, 8),
+				drag: 0.16,
+				life: randomRange(6.0, 10.5),
+				size: randomRange(52, 95),
+				sizeEnd: randomRange(120, 175),
+				color: [0.38, 0.4, 0.45],
+				colorEnd: [0.18, 0.2, 0.24],
+				alpha: randomRange(0.2, 0.32),
+				alphaEnd: 0,
+				gravityScale: 0
+			});
+		}
+
+		const jets = 6;
 		for (let j = 0; j < jets; j += 1) {
-			const count = Math.floor(42 * dt);
-			const offset = (j - 1) * 34;
-			for (let i = 0; i < count; i += 1) {
-				const wobble = Math.sin(t * 2.0 + j * 1.2) * 8;
+			const jetCount = emissionCount(24, dt);
+			const x = ((j + 0.5) / jets) * width;
+			for (let i = 0; i < jetCount; i += 1) {
+				const wobble = Math.sin(t * 2.0 + j) * 12;
 				spawnParticle({
-					x: baseX + offset + wobble + randomRange(-5, 5),
-					y: baseY + randomRange(-3, 3),
-					vx: randomRange(-30, 30),
-					vy: randomRange(-210, -110),
+					x: x + wobble + randomRange(-8, 8),
+					y: height * 0.95 + randomRange(-3, 3),
+					vx: randomRange(-28, 28),
+					vy: randomRange(-190, -110),
 					drag: 0.8,
-					life: randomRange(1.4, 2.4),
-					size: randomRange(8, 16),
-					sizeEnd: randomRange(38, 58),
-					color: [0.8, 0.84, 0.88],
-					colorEnd: [0.32, 0.36, 0.42],
-					alpha: randomRange(0.18, 0.3),
-					alphaEnd: 0.0,
-					gravityScale: -0.08,
-					kind: 'steam'
+					life: randomRange(1.3, 2.1),
+					size: randomRange(9, 15),
+					sizeEnd: randomRange(34, 56),
+					color: [0.82, 0.85, 0.89],
+					colorEnd: [0.38, 0.42, 0.48],
+					alpha: randomRange(0.28, 0.45),
+					alphaEnd: 0,
+					gravityScale: -0.1
 				});
 			}
 		}
 	}
 
-	function spawnCloudLayer(dt, t) {
-		const count = Math.floor(18 * dt);
-		const y = height * 0.18 + Math.sin(t * 0.25) * 18;
-		for (let i = 0; i < count; i += 1) {
-			spawnParticle({
-				x: randomRange(0, width),
-				y: y + randomRange(-30, 24),
-				vx: randomRange(6, 20),
-				vy: randomRange(-4, 4),
-				drag: 0.2,
-				life: randomRange(6.0, 10.0),
-				size: randomRange(40, 76),
-				sizeEnd: randomRange(90, 140),
-				color: [0.22, 0.24, 0.28],
-				colorEnd: [0.15, 0.16, 0.2],
-				alpha: randomRange(0.08, 0.14),
-				alphaEnd: 0.0,
-				gravityScale: 0.0,
-				kind: 'cloud'
-			});
-		}
-	}
-
-	function createRocket(t) {
+	function createRocket() {
 		rockets.push({
-			x: randomRange(width * 0.28, width * 0.72),
-			y: height + 10,
-			vx: randomRange(-25, 25),
-			vy: randomRange(-520, -630),
-			targetY: randomRange(height * 0.2, height * 0.45),
-			color: [randomRange(0.6, 1.0), randomRange(0.35, 1.0), randomRange(0.35, 1.0)],
-			bornAt: t,
+			x: randomRange(width * 0.15, width * 0.85),
+			y: height + 12,
+			vx: randomRange(-45, 45),
+			vy: randomRange(-680, -540),
+			targetY: randomRange(height * 0.16, height * 0.48),
+			color: [randomRange(0.6, 1.0), randomRange(0.4, 1.0), randomRange(0.35, 1.0)],
 			type: Math.floor(randomRange(0, 4))
 		});
 	}
@@ -285,18 +399,16 @@
 
 		for (let i = 0; i < burstCount; i += 1) {
 			let ang = randomRange(0, Math.PI * 2);
-			let speed = randomRange(90, 320);
+			let speed = randomRange(90, 330);
 
 			if (type === 1) {
-				const ringTightness = randomRange(0.94, 1.06);
-				speed = randomRange(190, 250) * ringTightness;
+				speed = randomRange(190, 250) * randomRange(0.94, 1.06);
 			} else if (type === 2) {
 				ang = (Math.PI * 2 * i) / burstCount + randomRange(-0.05, 0.05);
-				speed = randomRange(130, 280);
+				speed = randomRange(130, 290);
 			} else if (type === 3) {
 				const petals = 6;
-				const petalWave = 0.45 + 0.55 * Math.sin(ang * petals);
-				speed = randomRange(120, 260) * petalWave;
+				speed = randomRange(120, 270) * (0.45 + 0.55 * Math.sin(ang * petals));
 			}
 
 			const cJitter = 0.18;
@@ -305,77 +417,73 @@
 				y,
 				vx: Math.cos(ang) * speed,
 				vy: Math.sin(ang) * speed,
-				drag: 1.2,
+				drag: 1.18,
 				life: randomRange(1.0, 2.2),
-				size: randomRange(2.4, 5.4),
+				size: randomRange(2.4, 5.2),
 				sizeEnd: 0.7,
 				color: [
 					Math.min(1, baseColor[0] + randomRange(-cJitter, cJitter)),
 					Math.min(1, baseColor[1] + randomRange(-cJitter, cJitter)),
 					Math.min(1, baseColor[2] + randomRange(-cJitter, cJitter))
 				],
-				colorEnd: [0.12, 0.05, 0.02],
-				alpha: 1.0,
-				alphaEnd: 0.0,
-				gravityScale: 0.68,
-				kind: 'firework'
+				colorEnd: [0.1, 0.04, 0.02],
+				alpha: 1,
+				alphaEnd: 0,
+				gravityScale: 0.7
 			});
 		}
 
-		for (let i = 0; i < 36; i += 1) {
+		for (let i = 0; i < 34; i += 1) {
 			const ang = randomRange(0, Math.PI * 2);
-			const speed = randomRange(30, 70);
+			const speed = randomRange(30, 72);
 			spawnParticle({
 				x,
 				y,
 				vx: Math.cos(ang) * speed,
 				vy: Math.sin(ang) * speed,
 				drag: 0.6,
-				life: randomRange(1.6, 2.8),
-				size: randomRange(12, 20),
-				sizeEnd: randomRange(30, 56),
+				life: randomRange(1.5, 2.5),
+				size: randomRange(12, 18),
+				sizeEnd: randomRange(30, 54),
 				color: [0.35, 0.35, 0.4],
 				colorEnd: [0.05, 0.05, 0.06],
-				alpha: randomRange(0.16, 0.22),
-				alphaEnd: 0.0,
-				gravityScale: -0.06,
-				kind: 'fireworkSmoke'
+				alpha: randomRange(0.15, 0.22),
+				alphaEnd: 0,
+				gravityScale: -0.05
 			});
 		}
 	}
 
-	function spawnFireworks(dt, t, state) {
+	function spawnFireworks(dt) {
 		state.fireworkTimer -= dt;
 		if (state.fireworkTimer <= 0) {
-			createRocket(t);
-			if (Math.random() > 0.58) {
-				createRocket(t + 0.04);
+			createRocket();
+			if (Math.random() > 0.55) {
+				createRocket();
 			}
-			state.fireworkTimer = randomRange(1.0, 2.0);
+			state.fireworkTimer = randomRange(0.9, 1.7);
 		}
 
 		for (let i = rockets.length - 1; i >= 0; i -= 1) {
 			const r = rockets[i];
-
 			r.x += r.vx * dt;
 			r.y += r.vy * dt;
-			r.vy += gravity * 0.35 * dt;
+			r.vy += gravity * 0.34 * dt;
 
 			spawnParticle({
 				x: r.x,
 				y: r.y,
 				vx: randomRange(-12, 12),
-				vy: randomRange(40, 90),
+				vy: randomRange(36, 92),
 				drag: 2.4,
-				life: randomRange(0.22, 0.4),
-				size: randomRange(2.2, 3.4),
-				sizeEnd: 0.8,
-				color: [1.0, 0.78, 0.3],
-				colorEnd: [1.0, 0.2, 0.05],
+				life: randomRange(0.2, 0.4),
+				size: randomRange(2.2, 3.2),
+				sizeEnd: 0.7,
+				color: [1, 0.78, 0.3],
+				colorEnd: [1, 0.2, 0.05],
 				alpha: 0.9,
-				alphaEnd: 0.0,
-				gravityScale: 0.3,
-				kind: 'rocketTrail'
+				alphaEnd: 0,
+				gravityScale: 0.3
 			});
 
 			if (r.vy >= -20 || r.y <= r.targetY) {
@@ -386,15 +494,14 @@
 	}
 
 	function spawnMagicSpiral(dt, t) {
-		const count = Math.floor(180 * dt);
+		const count = Math.floor(220 * dt);
 		const cx = width * 0.5;
-		const cy = height * 0.72;
-
+		const cy = height * 0.55;
 		for (let i = 0; i < count; i += 1) {
-			const base = t * 2.7 + i * 0.4;
-			const radius = randomRange(12, 34);
+			const base = t * 2.8 + i * 0.4;
+			const radius = randomRange(10, 36);
 			const ang = base + Math.sin(base * 0.33) * 0.5;
-			const swirl = 95 + 38 * Math.sin(t * 3.0 + i);
+			const swirl = 105 + 38 * Math.sin(t * 3 + i);
 			const hue = 0.5 + 0.5 * Math.sin(base);
 
 			spawnParticle({
@@ -404,29 +511,23 @@
 				vy: Math.sin(ang + Math.PI * 0.5) * swirl - randomRange(30, 70),
 				ax: (cx - (cx + Math.cos(ang) * radius)) * 0.8,
 				ay: (cy - (cy + Math.sin(ang) * radius)) * 0.8,
-				drag: 1.6,
+				drag: 1.7,
 				life: randomRange(0.8, 1.6),
 				size: randomRange(2.0, 4.2),
 				sizeEnd: 0.6,
 				color: [0.2 + 0.8 * hue, 0.8, 1.0 - 0.4 * hue],
 				colorEnd: [0.08, 0.04, 0.12],
-				alpha: 0.75,
-				alphaEnd: 0.0,
-				gravityScale: -0.08,
-				kind: 'magic'
+				alpha: 0.8,
+				alphaEnd: 0,
+				gravityScale: -0.08
 			});
 		}
 	}
 
-	const state = {
-		fireworkTimer: 0.9,
-		time: 0,
-		maxParticles: 16000
-	};
-
 	const positions = new Float32Array(state.maxParticles * 2);
 	const sizes = new Float32Array(state.maxParticles);
 	const colors = new Float32Array(state.maxParticles * 4);
+	const sprites = new Float32Array(state.maxParticles);
 
 	function updateParticles(dt) {
 		for (let i = particles.length - 1; i >= 0; i -= 1) {
@@ -456,7 +557,6 @@
 
 	function fillBuffers() {
 		const count = Math.min(particles.length, state.maxParticles);
-
 		for (let i = 0; i < count; i += 1) {
 			const p = particles[i];
 			const life01 = 1 - p.life / p.maxLife;
@@ -470,13 +570,12 @@
 			positions[i * 2] = p.x;
 			positions[i * 2 + 1] = p.y;
 			sizes[i] = lerp(p.size, p.sizeEnd, t);
-
 			colors[i * 4] = lerp(p.color[0], p.colorEnd[0], t);
 			colors[i * 4 + 1] = lerp(p.color[1], p.colorEnd[1], t);
 			colors[i * 4 + 2] = lerp(p.color[2], p.colorEnd[2], t);
 			colors[i * 4 + 3] = alpha;
+			sprites[i] = p.sprite;
 		}
-
 		return count;
 	}
 
@@ -486,6 +585,10 @@
 
 		gl.useProgram(particleProgram);
 		gl.uniform2f(loc.resolution, width, height);
+		gl.uniform1f(loc.spriteReady, sparklerTextureReady ? 1 : 0);
+		gl.activeTexture(gl.TEXTURE0);
+		gl.bindTexture(gl.TEXTURE_2D, sparklerTexture);
+		gl.uniform1i(loc.spriteTexture, 0);
 
 		gl.enable(gl.BLEND);
 		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -505,10 +608,43 @@
 		gl.enableVertexAttribArray(loc.color);
 		gl.vertexAttribPointer(loc.color, 4, gl.FLOAT, false, 0, 0);
 
+		gl.bindBuffer(gl.ARRAY_BUFFER, spriteBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, sprites.subarray(0, count), gl.DYNAMIC_DRAW);
+		gl.enableVertexAttribArray(loc.sprite);
+		gl.vertexAttribPointer(loc.sprite, 1, gl.FLOAT, false, 0, 0);
+
 		gl.drawArrays(gl.POINTS, 0, count);
 	}
 
+	function spawnByMode(dt, time) {
+		if (state.mode === 1) {
+			spawnSparkler(dt, time);
+			return;
+		}
+		if (state.mode === 2) {
+			spawnSmoke(dt);
+			return;
+		}
+		if (state.mode === 3) {
+			spawnRain(dt);
+			spawnSnow(dt, time);
+			return;
+		}
+		if (state.mode === 4) {
+			spawnCloudsAndSteam(dt, time);
+			return;
+		}
+		if (state.mode === 5) {
+			spawnFireworks(dt);
+			return;
+		}
+		if (state.mode === 6) {
+			spawnMagicSpiral(dt, time);
+		}
+	}
+
 	let lastTime = performance.now();
+	setMode(1);
 
 	function frame(now) {
 		resize();
@@ -517,14 +653,7 @@
 		lastTime = now;
 		state.time += dt;
 
-		spawnSparkler(dt, state.time);
-		spawnSmoke(dt);
-		spawnRain(dt);
-		spawnSteamJets(dt, state.time);
-		spawnCloudLayer(dt, state.time);
-		spawnFireworks(dt, state.time, state);
-		spawnMagicSpiral(dt, state.time);
-
+		spawnByMode(dt, state.time);
 		updateParticles(dt);
 		const count = fillBuffers();
 		draw(count);
