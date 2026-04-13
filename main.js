@@ -109,6 +109,31 @@
 		return whole + (Math.random() < expected - whole ? 1 : 0);
 	}
 
+	function auroraGradientColor(u) {
+		const t = ((u % 1) + 1) % 1;
+		const stops = [
+			[0.0, [0.14, 0.88, 0.74]],
+			[0.34, [0.2, 0.58, 1.0]],
+			[0.68, [0.56, 0.4, 1.0]],
+			[1.0, [0.95, 0.54, 0.8]]
+		];
+
+		for (let i = 0; i < stops.length - 1; i += 1) {
+			const left = stops[i];
+			const right = stops[i + 1];
+			if (t >= left[0] && t <= right[0]) {
+				const k = (t - left[0]) / (right[0] - left[0]);
+				return [
+					lerp(left[1][0], right[1][0], k),
+					lerp(left[1][1], right[1][1], k),
+					lerp(left[1][2], right[1][2], k)
+				];
+			}
+		}
+
+		return [0.2, 0.58, 1.0];
+	}
+
 	function createTexturePlaceholder() {
 		const texture = gl.createTexture();
 		gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -528,48 +553,42 @@
 	}
 
 	function spawnMagicSpiral(dt, t) {
-		const count = emissionCount(240, dt);
+		const count = emissionCount(340, dt);
 		for (let i = 0; i < count; i += 1) {
-			const x = randomRange(0, width);
-			const nx = x / width;
-			const phase1 = t * 0.35 + randomRange(-Math.PI, Math.PI);
-			const phase2 = t * 0.7 + randomRange(-Math.PI, Math.PI);
-			const phase3 = t * 1.25 + randomRange(-Math.PI, Math.PI);
-			const waveA = Math.sin(nx * 8.8 + phase1);
-			const waveB = Math.sin(nx * 15.4 + phase2) * 0.55;
-			const waveC = Math.sin(nx * 23.6 + phase3) * 0.28;
-			const turbulence = randomRange(-0.22, 0.22);
-			const yBase = height * 0.5 + (waveA + waveB + waveC + turbulence) * height * 0.12;
-			const palette = [
-				[0.15, 0.88, 0.72],
-				[0.22, 0.66, 1.0],
-				[0.52, 0.42, 1.0],
-				[0.95, 0.46, 0.78]
-			];
-			const c1 = palette[Math.floor(randomRange(0, palette.length))];
-			const c2 = palette[Math.floor(randomRange(0, palette.length))];
-			const mixK = randomRange(0.1, 0.9);
-			const r = lerp(c1[0], c2[0], mixK);
-			const g = lerp(c1[1], c2[1], mixK);
-			const b = lerp(c1[2], c2[2], mixK);
+			const lane = Math.floor(randomRange(0, 3));
+			const nx = randomRange(0, 1);
+			const x = nx * width + randomRange(0, width * 0.08);
+			const sinWave = Math.sin(nx * 8.5 + t * 0.7 + lane * 0.9);
+			const cosWave = Math.cos(nx * 4.2 + t * 0.75 + lane * 1.1) * 0.55;
+			const laneOffset = (lane - 1) * height * 0.08;
+			const yCenter = height * 0.48 + laneOffset + (sinWave + cosWave) * height * 0.07;
+
+			const ribbonWidth = lane === 1 ? 110 : 90;
+			const side = Math.random() < 0.5 ? -1 : 1;
+			const thicknessBias = Math.pow(Math.random(), 0.65);
+			const yOffset = side * thicknessBias * ribbonWidth;
+
+			const colorFlow = nx + t * 0.08 + lane * 0.1;
+			const color = auroraGradientColor(colorFlow);
+			const curtainBend = Math.sin(t * 0.9 + lane * 1.6) * 12;
 
 			spawnParticle({
-				x,
-				y: yBase + randomRange(-62, 62),
-				vx: randomRange(-30, 30),
-				vy: randomRange(-26, 18),
-				ax: randomRange(-8, 8),
-				ay: randomRange(-3.2, 3.2),
-				drag: 0.18,
-				life: randomRange(4.8, 8.4),
-				size: randomRange(28, 62),
-				sizeEnd: randomRange(70, 130),
-				color: [r, g, b],
-				colorEnd: [r * 0.3, g * 0.35, b * 0.45],
-				alpha: randomRange(0.12, 0.26),
+				x: x + curtainBend,
+				y: yCenter + yOffset,
+				vx: randomRange(-68, -28) + sinWave * 6,
+				vy: randomRange(-10, 10),
+				ax: randomRange(-0.7, 0.1),
+				ay: randomRange(-0.6, 0.6),
+				drag: 0.13,
+				life: randomRange(6.2, 10.2),
+				size: randomRange(36, 82),
+				sizeEnd: randomRange(92, 174),
+				color,
+				colorEnd: [color[0] * 0.3, color[1] * 0.34, color[2] * 0.46],
+				alpha: randomRange(0.11, 0.24),
 				alphaEnd: 0,
-				gravityScale: -0.06,
-				fadeIn: randomRange(0.8, 1.8)
+				gravityScale: 0,
+				fadeIn: randomRange(1.0, 2.1)
 			});
 		}
 	}
