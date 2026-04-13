@@ -32,8 +32,10 @@
 	const fragmentShaderSource = `
 		precision mediump float;
 
-		uniform sampler2D u_spriteTexture;
-		uniform float u_spriteReady;
+		uniform sampler2D u_bengTexture;
+		uniform sampler2D u_snowTexture;
+		uniform float u_bengReady;
+		uniform float u_snowReady;
 
 		varying vec4 v_color;
 		varying float v_sprite;
@@ -45,8 +47,14 @@
 			float glow = smoothstep(1.0, 0.2, d) * 0.35;
 			float radialAlpha = (core + glow) * v_color.a;
 
-			if (v_sprite > 0.5 && u_spriteReady > 0.5) {
-				vec4 sprite = texture2D(u_spriteTexture, gl_PointCoord);
+			if (v_sprite > 0.5 && v_sprite < 1.5 && u_bengReady > 0.5) {
+				vec4 sprite = texture2D(u_bengTexture, gl_PointCoord);
+				gl_FragColor = vec4(v_color.rgb * sprite.rgb, v_color.a * sprite.a);
+				return;
+			}
+
+			if (v_sprite > 1.5 && u_snowReady > 0.5) {
+				vec4 sprite = texture2D(u_snowTexture, gl_PointCoord);
 				gl_FragColor = vec4(v_color.rgb * sprite.rgb, v_color.a * sprite.a);
 				return;
 			}
@@ -145,8 +153,10 @@
 		color: gl.getAttribLocation(particleProgram, 'a_color'),
 		sprite: gl.getAttribLocation(particleProgram, 'a_sprite'),
 		resolution: gl.getUniformLocation(particleProgram, 'u_resolution'),
-		spriteTexture: gl.getUniformLocation(particleProgram, 'u_spriteTexture'),
-		spriteReady: gl.getUniformLocation(particleProgram, 'u_spriteReady')
+		bengTexture: gl.getUniformLocation(particleProgram, 'u_bengTexture'),
+		snowTexture: gl.getUniformLocation(particleProgram, 'u_snowTexture'),
+		bengReady: gl.getUniformLocation(particleProgram, 'u_bengReady'),
+		snowReady: gl.getUniformLocation(particleProgram, 'u_snowReady')
 	};
 
 	const positionBuffer = gl.createBuffer();
@@ -158,6 +168,12 @@
 	let sparklerTextureReady = false;
 	loadTexture(sparklerTexture, 'beng_light.png', () => {
 		sparklerTextureReady = true;
+	});
+
+	const snowTexture = createTexturePlaceholder();
+	let snowTextureReady = false;
+	loadTexture(snowTexture, 'snowflake.png', () => {
+		snowTextureReady = true;
 	});
 
 	let width = 1;
@@ -191,14 +207,15 @@
 		fireworkTimer: 0.8,
 		maxParticles: 18000,
 		sizeScale: 1.7,
-		snowExtraScale: 1.25,
+		snowExtraScale: 1.55,
 		modeNames: {
 			1: '1: Beng lights',
 			2: '2: Smoke',
-			3: '3: Rain + Snow',
+			3: '3: Rain',
 			4: '4: Clouds + Steam',
 			5: '5: Fireworks',
-			6: '6: Extra effect'
+			6: '6: Extra effect',
+			7: 'E: Snow'
 		}
 	};
 
@@ -215,11 +232,17 @@
 		const key = Number(event.key);
 		if (key >= 1 && key <= 6) {
 			setMode(key);
+			return;
+		}
+
+		if (event.key === 'e' || event.key === 'E' || event.key === 'у' || event.key === 'У') {
+			setMode(7);
 		}
 	});
 
 	function spawnParticle(p) {
 		const sizeScale = p.sizeScale == null ? state.sizeScale : p.sizeScale;
+		const spriteType = p.spriteType == null ? (p.sprite ? 1 : 0) : p.spriteType;
 		particles.push({
 			x: p.x,
 			y: p.y,
@@ -238,7 +261,7 @@
 			alpha: p.alpha == null ? 1 : p.alpha,
 			alphaEnd: p.alphaEnd == null ? 0 : p.alphaEnd,
 			gravityScale: p.gravityScale == null ? 1 : p.gravityScale,
-			sprite: p.sprite ? 1 : 0
+			sprite: spriteType
 		});
 	}
 
@@ -248,22 +271,22 @@
 		const y = height * 0.58;
 		for (let i = 0; i < count; i += 1) {
 			const ang = randomRange(0, Math.PI * 2) + Math.sin(t * 9.0 + i * 0.2) * 0.12;
-			const speed = randomRange(140, 410);
+			const speed = randomRange(180, 360);
 			spawnParticle({
 				x,
 				y,
 				vx: Math.cos(ang) * speed + randomRange(-30, 30),
 				vy: Math.sin(ang) * speed,
-				drag: 1.6,
-				life: randomRange(0.55, 1.2),
-				size: randomRange(4.0, 8.8),
+				drag: 1.1,
+				life: randomRange(1.0, 1.9),
+				size: randomRange(6.8, 14.8),
 				sizeEnd: 1.0,
 				color: [1.0, randomRange(0.78, 0.96), randomRange(0.22, 0.45)],
 				colorEnd: [1.0, 0.2, 0.05],
 				alpha: 0.95,
 				alphaEnd: 0.0,
-				gravityScale: 0.68,
-				sprite: true
+				gravityScale: 0.48,
+				spriteType: 1
 			});
 		}
 	}
@@ -282,7 +305,7 @@
 				life: randomRange(2.2, 4.2),
 				size: randomRange(14, 22),
 				sizeEnd: randomRange(46, 90),
-				color: [0.5, 0.5, 0.5],
+				color: [0.62, 0.62, 0.62],
 				colorEnd: [0.1, 0.1, 0.1],
 				alpha: randomRange(0.24, 0.34),
 				alphaEnd: 0.0,
@@ -301,8 +324,8 @@
 				vy: randomRange(630, 980),
 				drag: 0,
 				life: randomRange(0.75, 1.35),
-				size: randomRange(1.2, 2.0),
-				sizeEnd: 1.0,
+				size: randomRange(2.0, 3.3),
+				sizeEnd: 1.4,
 				color: [0.58, 0.76, 1.0],
 				colorEnd: [0.45, 0.6, 0.9],
 				alpha: randomRange(0.35, 0.56),
@@ -324,25 +347,26 @@
 				vy: randomRange(80, 165),
 				drag: 0.22,
 				life: randomRange(4.8, 8.0),
-				size: randomRange(2.0, 3.6),
-				sizeEnd: randomRange(1.6, 2.8),
+				size: randomRange(3.6, 5.8),
+				sizeEnd: randomRange(2.8, 4.8),
 				color: [0.95, 0.98, 1.0],
 				colorEnd: [0.86, 0.9, 0.95],
 				alpha: randomRange(0.6, 0.95),
 				alphaEnd: 0.15,
 				gravityScale: 0.06,
-				sizeScale: state.sizeScale * state.snowExtraScale
+				sizeScale: state.sizeScale * state.snowExtraScale,
+				spriteType: 2
 			});
 		}
 	}
 
 	function spawnCloudsAndSteam(dt, t) {
 		const cloudCount = emissionCount(36, dt);
-		const topBand = height * 0.27;
+		const topBand = height * 0.14;
 		for (let i = 0; i < cloudCount; i += 1) {
 			spawnParticle({
 				x: randomRange(-20, width + 20),
-				y: topBand + randomRange(-70, 95),
+				y: topBand + randomRange(-18, 58),
 				vx: randomRange(8, 28),
 				vy: randomRange(-8, 8),
 				drag: 0.16,
@@ -353,7 +377,8 @@
 				colorEnd: [0.18, 0.2, 0.24],
 				alpha: randomRange(0.2, 0.32),
 				alphaEnd: 0,
-				gravityScale: 0
+				gravityScale: 0,
+				fadeIn: randomRange(1.2, 2.3)
 			});
 		}
 
@@ -376,7 +401,8 @@
 					colorEnd: [0.38, 0.42, 0.48],
 					alpha: randomRange(0.28, 0.45),
 					alphaEnd: 0,
-					gravityScale: -0.1
+					gravityScale: -0.1,
+					fadeIn: randomRange(0.4, 0.8)
 				});
 			}
 		}
@@ -395,20 +421,20 @@
 	}
 
 	function explodeFirework(x, y, baseColor, type) {
-		const burstCount = [90, 120, 150, 110][type] || 100;
+		const burstCount = [110, 140, 170, 130][type] || 120;
 
 		for (let i = 0; i < burstCount; i += 1) {
 			let ang = randomRange(0, Math.PI * 2);
-			let speed = randomRange(90, 330);
+			let speed = randomRange(130, 430);
 
 			if (type === 1) {
-				speed = randomRange(190, 250) * randomRange(0.94, 1.06);
+				speed = randomRange(250, 330) * randomRange(0.94, 1.06);
 			} else if (type === 2) {
 				ang = (Math.PI * 2 * i) / burstCount + randomRange(-0.05, 0.05);
-				speed = randomRange(130, 290);
+				speed = randomRange(180, 360);
 			} else if (type === 3) {
 				const petals = 6;
-				speed = randomRange(120, 270) * (0.45 + 0.55 * Math.sin(ang * petals));
+				speed = randomRange(170, 340) * (0.45 + 0.55 * Math.sin(ang * petals));
 			}
 
 			const cJitter = 0.18;
@@ -585,10 +611,14 @@
 
 		gl.useProgram(particleProgram);
 		gl.uniform2f(loc.resolution, width, height);
-		gl.uniform1f(loc.spriteReady, sparklerTextureReady ? 1 : 0);
+		gl.uniform1f(loc.bengReady, sparklerTextureReady ? 1 : 0);
+		gl.uniform1f(loc.snowReady, snowTextureReady ? 1 : 0);
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, sparklerTexture);
-		gl.uniform1i(loc.spriteTexture, 0);
+		gl.uniform1i(loc.bengTexture, 0);
+		gl.activeTexture(gl.TEXTURE1);
+		gl.bindTexture(gl.TEXTURE_2D, snowTexture);
+		gl.uniform1i(loc.snowTexture, 1);
 
 		gl.enable(gl.BLEND);
 		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -627,7 +657,6 @@
 		}
 		if (state.mode === 3) {
 			spawnRain(dt);
-			spawnSnow(dt, time);
 			return;
 		}
 		if (state.mode === 4) {
@@ -640,6 +669,10 @@
 		}
 		if (state.mode === 6) {
 			spawnMagicSpiral(dt, time);
+			return;
+		}
+		if (state.mode === 7) {
+			spawnSnow(dt, time);
 		}
 	}
 
