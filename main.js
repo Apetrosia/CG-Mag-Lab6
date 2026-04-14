@@ -138,7 +138,7 @@
 		return whole + (Math.random() < expected - whole ? 1 : 0);
 	}
 
-	function auroraGradientColor(u) {
+	function gradientColor(u) {
 		const t = ((u % 1) + 1) % 1;
 		const stops = [
 			[0.0, [0.14, 0.88, 0.74]],
@@ -648,11 +648,10 @@
 
 			const ribbonWidth = lane === 1 ? 110 : 90;
 			const side = Math.random() < 0.5 ? -1 : 1;
-			const thicknessBias = Math.pow(Math.random(), 0.65);
-			const yOffset = side * thicknessBias * ribbonWidth;
+			const yOffset = side * ribbonWidth * Math.pow(Math.random(), 0.65);
 
 			const colorFlow = nx + t * 0.08 + lane * 0.1;
-			const color = auroraGradientColor(colorFlow);
+			const color = gradientColor(colorFlow);
 			const curtainBend = Math.sin(t * 0.9 + lane * 1.6) * 12;
 
 			spawnParticle({
