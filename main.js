@@ -46,20 +46,49 @@
 			float core = smoothstep(0.75, 0.0, d);
 			float glow = smoothstep(1.0, 0.2, d) * 0.35;
 			float radialAlpha = (core + glow) * v_color.a;
+			int spriteType = int(floor(v_sprite + 0.5));
 
-			if (v_sprite > 0.5 && v_sprite < 1.5 && u_bengReady > 0.5) {
+			if (spriteType == 1 && u_bengReady > 0.5) {
 				vec4 sprite = texture2D(u_bengTexture, gl_PointCoord);
 				gl_FragColor = vec4(v_color.rgb * sprite.rgb, v_color.a * sprite.a);
 				return;
 			}
 
-			if (v_sprite > 1.5 && u_snowReady > 0.5) {
+			if (spriteType == 2 && u_snowReady > 0.5) {
 				vec4 sprite = texture2D(u_snowTexture, gl_PointCoord);
 				gl_FragColor = vec4(v_color.rgb * sprite.rgb, v_color.a * sprite.a);
 				return;
 			}
 
 			gl_FragColor = vec4(v_color.rgb, radialAlpha);
+		}
+	`;
+
+	const trailVertexShaderSource = `
+		attribute vec2 a_position;
+		attribute vec3 a_color;
+
+		uniform vec2 u_resolution;
+
+		varying vec3 v_color;
+
+		void main() {
+			vec2 zeroToOne = a_position / u_resolution;
+			vec2 zeroToTwo = zeroToOne * 2.0;
+			vec2 clipSpace = zeroToTwo - 1.0;
+
+			v_color = a_color;
+			gl_Position = vec4(clipSpace * vec2(1.0, -1.0), 0.0, 1.0);
+		}
+	`;
+
+	const trailFragmentShaderSource = `
+		precision mediump float;
+
+		varying vec3 v_color;
+
+		void main() {
+			gl_FragColor = vec4(v_color, 1.0);
 		}
 	`;
 
@@ -171,6 +200,7 @@
 	}
 
 	const particleProgram = createProgram(vertexShaderSource, fragmentShaderSource);
+	const trailProgram = createProgram(trailVertexShaderSource, trailFragmentShaderSource);
 
 	const loc = {
 		position: gl.getAttribLocation(particleProgram, 'a_position'),
@@ -184,10 +214,18 @@
 		snowReady: gl.getUniformLocation(particleProgram, 'u_snowReady')
 	};
 
+	const trailLoc = {
+		position: gl.getAttribLocation(trailProgram, 'a_position'),
+		color: gl.getAttribLocation(trailProgram, 'a_color'),
+		resolution: gl.getUniformLocation(trailProgram, 'u_resolution')
+	};
+
 	const positionBuffer = gl.createBuffer();
 	const sizeBuffer = gl.createBuffer();
 	const colorBuffer = gl.createBuffer();
 	const spriteBuffer = gl.createBuffer();
+	const trailPositionBuffer = gl.createBuffer();
+	const trailColorBuffer = gl.createBuffer();
 
 	const sparklerTexture = createTexturePlaceholder();
 	let sparklerTextureReady = false;
@@ -225,6 +263,9 @@
 	const gravity = 450;
 	const particles = [];
 	const rockets = [];
+	const SPRITE_NONE = 0;
+	const SPRITE_BENG = 1;
+	const SPRITE_SNOW = 2;
 
 	const state = {
 		mode: 1,
@@ -239,8 +280,9 @@
 			3: '3: Rain',
 			4: '4: Clouds + Steam',
 			5: '5: Fireworks',
-			6: '6: Aurora',
-			7: 'E: Snow'
+			6: '6: NorthenLights',
+			7: 'E: Snow',
+			8: 'Q: Sparkler Lecture'
 		}
 	};
 
@@ -262,15 +304,27 @@
 
 		if (event.key === 'e' || event.key === 'E' || event.key === 'у' || event.key === 'У') {
 			setMode(7);
+			return;
+		}
+
+		if (event.key === 'q' || event.key === 'Q' || event.key === 'й' || event.key === 'Й') {
+			setMode(8);
 		}
 	});
 
 	function spawnParticle(p) {
 		const sizeScale = p.sizeScale == null ? state.sizeScale : p.sizeScale;
-		const spriteType = p.spriteType == null ? (p.sprite ? 1 : 0) : p.spriteType;
+		const spriteType = p.spriteType == null ? SPRITE_NONE : p.spriteType;
+		const normalizedSpriteType = spriteType === SPRITE_BENG
+			? SPRITE_BENG
+			: (spriteType === SPRITE_SNOW ? SPRITE_SNOW : SPRITE_NONE);
 		particles.push({
 			x: p.x,
 			y: p.y,
+			originX: p.originX == null ? p.x : p.originX,
+			originY: p.originY == null ? p.y : p.originY,
+			prevX: p.x,
+			prevY: p.y,
 			vx: p.vx || 0,
 			vy: p.vy || 0,
 			ax: p.ax || 0,
@@ -286,9 +340,38 @@
 			alpha: p.alpha == null ? 1 : p.alpha,
 			alphaEnd: p.alphaEnd == null ? 0 : p.alphaEnd,
 			gravityScale: p.gravityScale == null ? 1 : p.gravityScale,
-			sprite: spriteType,
+			sprite: normalizedSpriteType,
 			kind: p.kind || 'generic'
 		});
+	}
+
+	function spawnSparklerLecture(dt, t) {
+		const count = emissionCount(180, dt);
+		const x = width * 0.5;
+		const y = height * 0.58;
+		for (let i = 0; i < count; i += 1) {
+			const ang = randomRange(0, Math.PI * 2) + Math.sin(t * 10.0 + i * 0.18) * 0.16;
+			const speed = randomRange(210, 440);
+			spawnParticle({
+				x,
+				y,
+				originX: x,
+				originY: y,
+				vx: Math.cos(ang) * speed + randomRange(-24, 24),
+				vy: Math.sin(ang) * speed + randomRange(-18, 18),
+				drag: 1.25,
+				life: randomRange(0.55, 1.0),
+				size: randomRange(42.0, 64.0),
+				sizeEnd: randomRange(16.0, 24.0),
+				color: [1.0, randomRange(0.82, 1.0), randomRange(0.24, 0.5)],
+				colorEnd: [1.0, 0.35, 0.06],
+				alpha: 0.98,
+				alphaEnd: 0.0,
+				gravityScale: 0,
+				spriteType: SPRITE_BENG,
+				kind: 'sparklerLecture'
+			});
+		}
 	}
 
 	function spawnSparkler(dt, t) {
@@ -312,7 +395,7 @@
 				alpha: 0.95,
 				alphaEnd: 0.0,
 				gravityScale: 0.48,
-				spriteType: 1,
+				spriteType: SPRITE_BENG,
 				kind: 'sparkler'
 			});
 		}
@@ -382,7 +465,7 @@
 				alphaEnd: 0.15,
 				gravityScale: 0.06,
 				sizeScale: state.sizeScale * state.snowExtraScale,
-				spriteType: 2
+				spriteType: SPRITE_SNOW
 			});
 		}
 	}
@@ -597,6 +680,8 @@
 	const sizes = new Float32Array(state.maxParticles);
 	const colors = new Float32Array(state.maxParticles * 4);
 	const sprites = new Float32Array(state.maxParticles);
+	const trailPositions = new Float32Array(state.maxParticles * 4);
+	const trailColors = new Float32Array(state.maxParticles * 6);
 
 	function updateParticles(dt) {
 		for (let i = particles.length - 1; i >= 0; i -= 1) {
@@ -617,6 +702,8 @@
 			p.vx += p.ax * dt;
 			p.vy += (p.ay + gravity * p.gravityScale) * dt;
 
+			p.prevX = prevX;
+			p.prevY = prevY;
 			p.x += p.vx * dt;
 			p.y += p.vy * dt;
 
@@ -635,7 +722,7 @@
 					alpha: 0.55,
 					alphaEnd: 0,
 					gravityScale: 0.35,
-					spriteType: 0,
+					spriteType: SPRITE_NONE,
 					kind: 'sparklerTrail'
 				});
 			}
@@ -646,6 +733,40 @@
 		}
 	}
 
+	function fillTrailBuffers() {
+		let vertexCount = 0;
+		for (let i = 0; i < particles.length && vertexCount + 2 <= state.maxParticles * 2; i += 1) {
+			const p = particles[i];
+			if (p.kind !== 'sparklerLecture') {
+				continue;
+			}
+
+			const t = 1 - p.life / p.maxLife;
+			const r = 1.0;
+			const g = 0.95;
+			const b = 0.78;
+
+			const posBase = vertexCount * 2;
+			const colBase = vertexCount * 3;
+
+			trailPositions[posBase] = p.originX;
+			trailPositions[posBase + 1] = p.originY;
+			trailPositions[posBase + 2] = p.x;
+			trailPositions[posBase + 3] = p.y;
+
+			trailColors[colBase] = r;
+			trailColors[colBase + 1] = g;
+			trailColors[colBase + 2] = b;
+			trailColors[colBase + 3] = r;
+			trailColors[colBase + 4] = g;
+			trailColors[colBase + 5] = b;
+
+			vertexCount += 2;
+		}
+
+		return vertexCount;
+	}
+
 	function fillBuffers() {
 		const count = Math.min(particles.length, state.maxParticles);
 		for (let i = 0; i < count; i += 1) {
@@ -654,6 +775,9 @@
 			const t = Math.min(1, Math.max(0, life01));
 
 			let alpha = lerp(p.alpha, p.alphaEnd, t);
+			if (p.kind === 'sparklerLecture') {
+				alpha = p.alpha;
+			}
 			if (p.fadeIn > 0 && p.life > p.maxLife - p.fadeIn) {
 				alpha *= (p.maxLife - p.life) / p.fadeIn;
 			}
@@ -661,18 +785,45 @@
 			positions[i * 2] = p.x;
 			positions[i * 2 + 1] = p.y;
 			sizes[i] = lerp(p.size, p.sizeEnd, t);
-			colors[i * 4] = lerp(p.color[0], p.colorEnd[0], t);
-			colors[i * 4 + 1] = lerp(p.color[1], p.colorEnd[1], t);
-			colors[i * 4 + 2] = lerp(p.color[2], p.colorEnd[2], t);
+			if (p.kind === 'sparklerLecture') {
+				colors[i * 4] = p.color[0];
+				colors[i * 4 + 1] = p.color[1];
+				colors[i * 4 + 2] = p.color[2];
+			} else {
+				colors[i * 4] = lerp(p.color[0], p.colorEnd[0], t);
+				colors[i * 4 + 1] = lerp(p.color[1], p.colorEnd[1], t);
+				colors[i * 4 + 2] = lerp(p.color[2], p.colorEnd[2], t);
+			}
 			colors[i * 4 + 3] = alpha;
 			sprites[i] = p.sprite;
 		}
 		return count;
 	}
 
-	function draw(count) {
+	function draw(count, trailVertexCount) {
 		gl.clearColor(0, 0, 0, 1);
 		gl.clear(gl.COLOR_BUFFER_BIT);
+
+		gl.enable(gl.BLEND);
+		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+		if (trailVertexCount > 0) {
+			gl.useProgram(trailProgram);
+			gl.uniform2f(trailLoc.resolution, width, height);
+			gl.lineWidth(1.5);
+
+			gl.bindBuffer(gl.ARRAY_BUFFER, trailPositionBuffer);
+			gl.bufferData(gl.ARRAY_BUFFER, trailPositions.subarray(0, trailVertexCount * 2), gl.DYNAMIC_DRAW);
+			gl.enableVertexAttribArray(trailLoc.position);
+			gl.vertexAttribPointer(trailLoc.position, 2, gl.FLOAT, false, 0, 0);
+
+			gl.bindBuffer(gl.ARRAY_BUFFER, trailColorBuffer);
+			gl.bufferData(gl.ARRAY_BUFFER, trailColors.subarray(0, trailVertexCount * 3), gl.DYNAMIC_DRAW);
+			gl.enableVertexAttribArray(trailLoc.color);
+			gl.vertexAttribPointer(trailLoc.color, 3, gl.FLOAT, false, 0, 0);
+
+			gl.drawArrays(gl.LINES, 0, trailVertexCount);
+		}
 
 		gl.useProgram(particleProgram);
 		gl.uniform2f(loc.resolution, width, height);
@@ -684,9 +835,6 @@
 		gl.activeTexture(gl.TEXTURE1);
 		gl.bindTexture(gl.TEXTURE_2D, snowTexture);
 		gl.uniform1i(loc.snowTexture, 1);
-
-		gl.enable(gl.BLEND);
-		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
 		gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
 		gl.bufferData(gl.ARRAY_BUFFER, positions.subarray(0, count * 2), gl.DYNAMIC_DRAW);
@@ -714,6 +862,10 @@
 	function spawnByMode(dt, time) {
 		if (state.mode === 1) {
 			spawnSparkler(dt, time);
+			return;
+		}
+		if (state.mode === 8) {
+			spawnSparklerLecture(dt, time);
 			return;
 		}
 		if (state.mode === 2) {
@@ -754,7 +906,8 @@
 		spawnByMode(dt, state.time);
 		updateParticles(dt);
 		const count = fillBuffers();
-		draw(count);
+		const trailVertexCount = state.mode === 8 ? fillTrailBuffers() : 0;
+		draw(count, trailVertexCount);
 
 		requestAnimationFrame(frame);
 	}
