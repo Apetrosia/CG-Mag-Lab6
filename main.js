@@ -350,12 +350,12 @@
 				vx: randomRange(-22, 14),
 				vy: randomRange(330, 580),
 				drag: 0,
-				life: randomRange(1.9, 3.1),
+				life: randomRange(3.1, 5.2),
 				size: randomRange(2.0, 3.3),
 				sizeEnd: 1.4,
 				color: [0.58, 0.76, 1.0],
 				colorEnd: [0.45, 0.6, 0.9],
-				alpha: randomRange(0.35, 0.56),
+				alpha: randomRange(0.45, 0.66),
 				alphaEnd: 0.06,
 				gravityScale: 0
 			});
@@ -373,12 +373,12 @@
 				vx: randomRange(-18, 18) + wind,
 				vy: randomRange(70, 145),
 				drag: 0.22,
-				life: randomRange(8.5, 13.0),
+				life: randomRange(6.5, 8.0),
 				size: randomRange(3.2, 5.2),
 				sizeEnd: randomRange(2.4, 4.2),
 				color: [0.95, 0.98, 1.0],
 				colorEnd: [0.86, 0.9, 0.95],
-				alpha: randomRange(0.6, 0.95),
+				alpha: randomRange(0.6, 0.85),
 				alphaEnd: 0.15,
 				gravityScale: 0.06,
 				sizeScale: state.sizeScale * state.snowExtraScale,
@@ -403,8 +403,8 @@
 				vx,
 				vy: randomRange(-8, 8),
 				drag: 0.16,
-				life: randomRange(11.0, 18.0),
-				size: randomRange(52, 95),
+				life: randomRange(24.0, 30.0),
+				size: randomRange(62, 95),
 				sizeEnd: randomRange(120, 175),
 				color: [0.38, 0.4, 0.45],
 				colorEnd: [0.18, 0.2, 0.24],
@@ -456,12 +456,12 @@
 	function explodeFirework(x, y, baseColor, type) {
 		const burstCount = [110, 140, 170, 130][type] || 120;
 
-		for (let i = 0; i < burstCount; i += 1) {
+		for (let i = 0; i < burstCount; i++) {
 			let ang = randomRange(0, Math.PI * 2);
-			let speed = randomRange(130, 430);
+			let speed = randomRange(90, 430);
 
 			if (type === 1) {
-				speed = randomRange(250, 330) * randomRange(0.94, 1.06);
+				speed = randomRange(260, 330) * randomRange(0.94, 1.06);
 			} else if (type === 2) {
 				ang = (Math.PI * 2 * i) / burstCount + randomRange(-0.05, 0.05);
 				speed = randomRange(180, 360);
@@ -552,7 +552,7 @@
 		}
 	}
 
-	function spawnMagicSpiral(dt, t) {
+	function spawnNorthenLights(dt, t) {
 		const count = emissionCount(340, dt);
 		for (let i = 0; i < count; i += 1) {
 			const lane = Math.floor(randomRange(0, 3));
@@ -733,7 +733,7 @@
 			return;
 		}
 		if (state.mode === 6) {
-			spawnMagicSpiral(dt, time);
+			spawnNorthenLights(dt, time);
 			return;
 		}
 		if (state.mode === 7) {
