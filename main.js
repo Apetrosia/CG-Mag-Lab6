@@ -471,8 +471,7 @@
 	}
 
 	function spawnCloudsAndSteam(dt, t) {
-		const cloudRate = Math.random() < 0.55 ? 28 : 10;
-		const cloudCount = emissionCount(cloudRate, dt);
+		const cloudCount = emissionCount(100, dt);
 		const cloudClusterX = randomRange(0.1, 0.9) * width;
 		const clusterSpread = randomRange(width * 0.08, width * 0.22);
 		for (let i = 0; i < cloudCount; i += 1) {
@@ -486,7 +485,7 @@
 				vx,
 				vy: randomRange(-8, 8),
 				drag: 0.16,
-				life: randomRange(24.0, 30.0),
+				life: randomRange(18.0, 25.0),
 				size: randomRange(62, 95),
 				sizeEnd: randomRange(120, 175),
 				color: [0.38, 0.4, 0.45],
